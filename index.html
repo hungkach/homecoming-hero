@@ -804,10 +804,16 @@ let crowdNextSet = 0;
 function crowdFollow(){
   if (!AC || !game || now() < crowdHold || now() < crowdNextSet) return;
   crowdNextSet = now() + 0.25;
-  const g = game, p = g.p;
+  const g = game, p = g.p, big = g.down >= 3;
   let lvl = CROWD_BASE;
-  if (g.phase === "cadence") lvl = 0.025;
-  else if (g.phase === "live" && g.playType !== "pass") lvl = 0.06 + 0.32*clamp((p.z - 4)/35, 0, 1)*clamp((p.speed - 5)/3, 0, 1);
+  if (g.phase === "huddle" && big) lvl = g.down === 4 ? 0.2 : 0.14;     // on their feet for 3rd and 4th down
+  else if (g.phase === "cadence") lvl = big ? 0.06 : 0.025;
+  else if (g.phase === "live" && g.playType !== "pass"){
+    // a breakaway: nobody in front of you within 6 yards, the roar builds the farther you go
+    const open = p.z > 6 && p.speed > 6 && !g.defenders.some(d => d.state !== "down" && d.state !== "resolved" && d.z > p.z && d.z - p.z < 6 && Math.abs(d.x - p.x) < 5);
+    if (open && !g.breakaway){ g.breakaway = true; sfx.fanWhistles(6); }
+    lvl = open ? 0.35 + 0.45*clamp((p.z - 6)/40, 0, 1) : 0.06 + 0.32*clamp((p.z - 4)/35, 0, 1)*clamp((p.speed - 5)/3, 0, 1);
+  }
   else if (g.phase === "live") lvl = 0.07;
   const t = AC.currentTime;
   crowdGain.gain.cancelScheduledValues(t); crowdGain.gain.setTargetAtTime(lvl, t, 0.5);
@@ -860,18 +866,14 @@ const sfx = {
   },
   // fans whistling through their fingers
   fanWhistles(n = 3){ for (let i = 0; i < n; i++){ const f = rand(1900, 2600), d = rand(0, 0.9); tone(f*0.8, f, 0.18, 0.04, "sine", d, rand(-0.9, 0.9)); tone(f, f*0.7, 0.45, 0.04, "sine", d + 0.18, rand(-0.9, 0.9)); } },
-  cheer(){ crowd(0.45, 2.5); sfx.fanWhistles(4); brass([392, 494, 587], 0, 0.22); brass([440, 554, 659], 0.2, 0.22); brass([523, 659, 784], 0.4, 0.7); },
+  cheer(){ crowd(0.6, 2.5); sfx.fanWhistles(4); brass([392, 494, 587], 0, 0.22); brass([440, 554, 659], 0.2, 0.22); brass([523, 659, 784], 0.4, 0.7); },
   groan(){ crowd(0.18, 1); if (!AC) return; const t = AC.currentTime; crowdTone.frequency.cancelScheduledValues(t); crowdTone.frequency.setValueAtTime(1600, t); crowdTone.frequency.exponentialRampToValueAtTime(450, t + 1.0); },
   airHorn(){ if (!AC) return; const t = AC.currentTime;
     const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2200; const g = AC.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.05); g.gain.setValueAtTime(0.09, t + 1.1); g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
     lp.connect(g); g.connect(master);
     for (const f of [233, 294, 349]){ const o = AC.createOscillator(); o.type = "sawtooth"; o.frequency.setValueAtTime(f*0.94, t); o.frequency.linearRampToValueAtTime(f, t + 0.08); o.connect(lp); o.start(t); o.stop(t + 1.45); } },
-  touchdown(){ crowd(0.6, 4.5); sfx.airHorn(); sfx.fanWhistles(6);
-    // fight song tag from the band
-    const N = [[523, 659, 784, 0, 0.18], [587, 740, 880, 0.2, 0.18], [659, 784, 988, 0.4, 0.18], [784, 988, 1175, 0.6, 0.9]];
-    for (const [a, b, c, d, len] of N) brass([a/2, b/2, c/2], 1.3 + d, len, 0.08);
-    for (let k = 0; k < 6; k++) drum(1.3 + k*0.2, 0.35); },
+  touchdown(){ crowd(0.85, 5); sfx.airHorn(); sfx.fanWhistles(8); setTimeout(() => band("tag"), 1200); },
   // between plays the student section starts a chant: drum, drum, then claps
   chant(){ if (!AC) return; crowd(0.1, 3.4);
     for (let r = 0; r < 2; r++){ const o = r*1.6; drum(o, 0.4); drum(o + 0.3, 0.4); clap(o + 0.6); clap(o + 0.8); clap(o + 1.0); } },
@@ -884,6 +886,72 @@ const sfx = {
   kick(){ tone(140, 60, 0.18, 0.5, "sine"); noise(0.08, 1200, 0.3, "bandpass"); },
   drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
+/* ---------- the marching band ----------
+   Synthesized like everything else: a drumline (snare with rolls, bass drum, cymbal) and brass
+   (trumpets and a tuba) playing the Mustang March, an original fight song. It ducks under voices. */
+let bandBus = null;
+function bandOut(){ if (!bandBus){ bandBus = AC.createGain(); bandBus.gain.value = 0.8; bandBus.connect(master); } return bandBus; }
+const midi = n => 440*Math.pow(2, (n - 69)/12);
+function horn(n, t0, dur, vol, low){
+  const t = AC.currentTime + t0, lp = AC.createBiquadFilter(), g = AC.createGain();
+  lp.type = "lowpass"; lp.frequency.setValueAtTime(low ? 500 : 900, t); lp.frequency.linearRampToValueAtTime(low ? 1100 : 3200, t + 0.05); lp.frequency.exponentialRampToValueAtTime(low ? 600 : 1500, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.03); g.gain.setValueAtTime(vol*0.8, t + Math.max(0.05, dur - 0.06)); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  lp.connect(g); g.connect(bandOut());
+  for (const det of low ? [0] : [-7, 0, 7]){ const o = AC.createOscillator(); o.type = low ? "square" : "sawtooth"; o.frequency.value = midi(n); o.detune.value = det; o.connect(lp); o.start(t); o.stop(t + dur + 0.05); }
+}
+function snare(t0, vol = 0.12){
+  const t = AC.currentTime + t0, src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  src.buffer = noiseBuf; f.type = "bandpass"; f.frequency.value = 2600; f.Q.value = 0.7;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+  src.connect(f); f.connect(g); g.connect(bandOut()); src.start(t, Math.random()); src.stop(t + 0.14);
+}
+function bassDrum(t0, vol = 0.45){
+  const t = AC.currentTime + t0, o = AC.createOscillator(), g = AC.createGain();
+  o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.3);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  o.connect(g); g.connect(bandOut()); o.start(t); o.stop(t + 0.36);
+}
+function cymbal(t0, vol = 0.08){
+  const t = AC.currentTime + t0, src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  src.buffer = noiseBuf; f.type = "highpass"; f.frequency.value = 5500;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+  src.connect(f); f.connect(g); g.connect(bandOut()); src.start(t, Math.random()); src.stop(t + 1.4);
+}
+// the Mustang March: [note, beats] per bar, with the chord root for the tuba
+const MARCH = [
+  {mel: [[67, 1], [72, 1], [76, 1], [79, 1]], root: 48},
+  {mel: [[81, 2], [79, 1], [76, 1]], root: 53},
+  {mel: [[77, 1], [76, 1], [74, 1], [72, 1]], root: 53},
+  {mel: [[74, 3], [0, 1]], root: 43, roll: true},
+  {mel: [[67, 1], [72, 1], [76, 1], [79, 1]], root: 48},
+  {mel: [[81, 1], [84, 1], [83, 1], [81, 1]], root: 53},
+  {mel: [[79, 1], [77, 1], [76, 1], [74, 1]], root: 43},
+  {mel: [[72, 3], [0, 1]], root: 48, roll: true, end: true}
+];
+// what: "march" (the whole song), "tag" (the back half, after a touchdown), "cadence" (drums only), "riff" (two bars)
+function band(what){
+  if (!AC) return 0;
+  const B = 60/132, bars = what === "march" ? MARCH : what === "tag" ? MARCH.slice(4) : what === "riff" ? MARCH.slice(0, 2) : [];
+  const drumBars = what === "cadence" ? 4 : bars.length;
+  for (let b = 0; b < drumBars; b++){
+    const t0 = b*4*B;
+    bassDrum(t0); bassDrum(t0 + 2*B);
+    for (let k = 0; k < 8; k++) snare(t0 + k*B/2, k % 2 ? 0.05 : 0.09);
+    const bar = bars[b];
+    if ((bar && bar.roll) || (what === "cadence" && b % 2)) for (let k = 0; k < 12; k++) snare(t0 + 3*B + k*B/12, 0.03 + k*0.006);
+    if (b === 0) cymbal(t0);
+    if (!bar) continue;
+    let x = 0;
+    for (const [n, beats] of bar.mel){ if (n) horn(n, t0 + x*B, beats*B*0.92, 0.035); x += beats; }
+    horn(bar.root - 12, t0, B*0.9, 0.05, true); horn(bar.root - 5, t0 + 2*B, B*0.9, 0.05, true);
+    if (bar.end) cymbal(t0 + 3*B, 0.1);
+  }
+  return drumBars*4*B;
+}
+// voices come first: the band ducks while anyone is talking
+let bandDucked = null;
+function bandDuck(){ if (!bandBus) return; const talk = boothTalking() || now() - lastSpoke < 2.2; if (talk === bandDucked) return; bandDucked = talk; bandBus.gain.setTargetAtTime(talk ? 0.3 : 0.8, AC.currentTime, 0.2); }
+
 // voice: the device's best English voice unless one was picked. Premium and Enhanced voices are
 // downloadable on iPhone and sound far more natural than the default.
 const NOVELTY = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/i;
@@ -1344,7 +1412,7 @@ function startHuddle(newDrive){
   const call = callPlay();
   g.playType = call.type; g.play = call.play; g.lastPlay = g.play.name;
   g.front = pickFront();
-  g.caught = false; g.rt = null;
+  g.caught = false; g.rt = null; g.breakaway = false;
   g.pp = null; g.ball = null;
   g.p = {x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0};
   input.steps = []; input.juke = 0; input.shoulder = input.stiff = input.punch = false;
@@ -1935,8 +2003,10 @@ function clockCheck(){
   if (g.q >= 4){ endGame(); return true; }
   g.q++; syncClock();
   if (g.q === 3){ banner("Halftime", `Mustangs ${g.home}, Raiders ${g.away}. Get some water.`, 3); say("Halftime"); announce("half", {force: true, delay: 1}); g.ballOn = 75; g.down = 1; g.toGo = 10;
-    g.phase = "break"; g.t = mode === "body" ? 20 : 5; updateBoard(); return true; }
-  banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); g.phase = "break"; g.t = 3; updateBoard(); return true;
+    // the halftime show: the band plays the whole Mustang March while you get water
+    const show = band("march"); crowd(0.25, show || 3);
+    g.phase = "break"; g.t = Math.max(mode === "body" ? 20 : 8, show + 1); updateBoard(); return true; }
+  banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); band("cadence"); g.phase = "break"; g.t = 3; updateBoard(); return true;
 }
 // lead: a special teams result shown first (a punt or a field goal). oppFrom: yards the Raiders have to go.
 function startOpponent(afterTD, lead){
@@ -1985,10 +2055,15 @@ function update(dt){
     if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
   if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
-  crowdFollow(); announcerTick();
+  crowdFollow(); announcerTick(); if (AC) bandDuck();
   if (g.phase === "huddle"){
     const was = g.huddleLen - g.t; g.t -= dt;
-    if (was < 3 && g.huddleLen - g.t >= 3){ if (g.huddleLen >= 8 && Math.random() < 0.6) sfx.chant(); else if (Math.random() < 0.4) sfx.drumline(); }
+    if (was < 3 && g.huddleLen - g.t >= 3){
+      if (g.down >= 3 && g.huddleLen >= 8) sfx.chant();
+      else if (g.down >= 3 || Math.random() < 0.3) sfx.drumline();
+      else if (g.huddleLen >= 8 && Math.random() < 0.35) band("riff");
+    }
+    if (g.down >= 3 && Math.random() < dt*1.5) clap(0, 0.04);   // scattered clapping building for the big down
     // the snap count waits (up to 3 s) for the booth to finish its line
     if (g.t <= 0 && boothTalking() && (g.holdT = (g.holdT || 0) + dt) < 3) g.t = 0.01;
     if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; g.holdT = 0; $("playCard").hidden = true; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
@@ -2767,7 +2842,7 @@ const R3 = (() => {
     if (cone.visible) cone.position.set(rt.coneX, 0, -rt.coneZ);
     if (arrow.visible){ arrow.position.set(g.play.hole, 0.04, -1.6); arrow.material.opacity = 0.55 + 0.4*Math.sin(t*6); }
     // crowd
-    const hype = g ? (g.flash > 0 ? 1 : g.phase === "live" && g.playType !== "pass" && g.p.z > 8 && g.p.speed > 6.5 ? 0.45 : g.phase === "cadence" ? 0 : 0.08) : 0.05;
+    const hype = g ? (g.flash > 0 ? 1 : g.breakaway && g.phase === "live" ? 0.8 : g.phase === "live" && g.playType !== "pass" && g.p.z > 8 && g.p.speed > 6.5 ? 0.45 : g.phase === "huddle" && g.down >= 3 ? 0.4 : g.phase === "cadence" ? 0 : 0.08) : 0.05;
     for (const m of crowdMats){ m.userData.u.uTime.value = t; m.userData.u.uHype.value += (hype - m.userData.u.uHype.value)*Math.min(1, dt*3); }
     if (g && g.flash > lastFlash + 0.5) launchFireworks();
     lastFlash = g ? g.flash : 0; stepFireworks(dt);
@@ -2965,7 +3040,7 @@ $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, sfx, r3: R3.info, set paused(v){ paused = v; }, setup,
+window.__hh = { get game(){ return game; }, input, startTouch, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup,
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();
