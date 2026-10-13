@@ -73,6 +73,8 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .modeInfo b{display:block;font:400 19px/1.2 var(--slab);color:var(--ink);margin-bottom:4px}
 .pick{display:grid;gap:6px;font:600 14px/1 var(--cond);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim)}
 .pick select{font:600 17px/1.2 var(--cond);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f1730;color:var(--ink);text-transform:none;letter-spacing:0}
+.coachCard{width:min(620px,100%);gap:8px;padding:14px 18px}
+.coachCard h2{font-size:clamp(28px,6vh,60px)}
 .diag{font:500 13px/1.3 var(--cond);color:var(--ink-dim);opacity:.8;font-variant-numeric:tabular-nums}
 [hidden]{display:none!important}
 </style>
@@ -143,12 +145,13 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   </div>
 </div>
 
-<div class="overlay" id="calibScreen" hidden style="place-items:start center">
-  <div class="card" style="margin-top:12vh">
+<div class="overlay" id="calibScreen" hidden style="place-items:start center;background:none;pointer-events:none">
+  <div class="card coachCard" style="pointer-events:auto">
     <h2 id="calibTitle">Get in frame</h2>
     <p id="calibMsg" style="font-size:clamp(17px,2.8vh,28px)">Step back until your head and knees are both visible. About 4 feet is enough.</p>
     <p id="calibNote" class="note" hidden></p>
     <p id="calibDiag" class="diag"></p>
+    <div class="btns"><button id="calibBack" class="ghost" type="button" style="flex:0 0 auto;padding:10px 16px;font-size:16px">Back</button></div>
   </div>
 </div>
 
@@ -466,6 +469,8 @@ const BodyCore = (() => {
   function runTrigger(tr, F){
     const vals = tr.cues.map(c => { const v = c.fn(F); return v == null || !isFinite(v) ? null : v; });
     tr.vals = vals;
+        capture(tr, vals);
+
     if (!base.ok) return;
     let on = 0, off = 0;
     vals.forEach((v, i) => { if (v == null) return; if (v >= tr.cues[i].on) on++; if (v <= tr.cues[i].off) off++; });   // missing data is unknown, not off
@@ -528,6 +533,76 @@ const BodyCore = (() => {
     for (const tr of TRIGGERS){ tr.active = true; tr.lastFire = lastPoseAt; }   // start held, so nothing fires until it releases
     return true;
   }
+    /* ---------- move test ----------
+     captureStart(types) records each cue's peak while the player does a move;
+     captureStart("stand") records resting values. applyMoveTest() then sets
+     every movement-size cue to 60 percent of the way from rest to the
+     player's own peak. Shape cues (arm straightness) keep fixed values. */
+  let cap = null;
+  const peaks = {}, rest = {}, restN = {};
+  const cueKey = (tr, c) => `${tr.type}${tr.side || ""}.${c.id}`;
+  function captureStart(types){ cap = types; }
+  function captureStop(){ cap = null; }
+  function capture(tr, vals){
+    if (!cap) return;
+    tr.cues.forEach((c, i) => {
+      const v = vals[i]; if (v == null || !c.calib) return;
+      const k = cueKey(tr, c);
+      if (cap === "stand"){ rest[k] = (rest[k] || 0) + v; restN[k] = (restN[k] || 0) + 1; }
+      else if (cap.includes(tr.type)) peaks[k] = Math.max(peaks[k] ?? -Infinity, v);
+    });
+  }
+  function applyMoveTest(){
+    const seen = {};
+    for (const tr of TRIGGERS) for (const c of tr.cues){
+      if (!c.calib) continue;
+      const k = cueKey(tr, c), pk = peaks[k], r0 = restN[k] ? Math.max(0, rest[k]/restN[k]) : 0;
+      if (pk == null || pk < r0 + 0.7*(c.def.on - r0)){ c.on = c.def.on; c.off = c.def.off; continue; }   // move not seen: keep defaults
+      seen[tr.type] = true;
+      const on = clamp(r0 + 0.6*(pk - r0), c.def.on*0.5, c.def.on*1.6);
+      c.on = on; c.off = Math.min(r0 + 0.3*(pk - r0), r0 + 0.5*(on - r0));
+    }
+    if (peaks["level.drop"] != null && seen.level) squatRef = clamp(peaks["level.drop"], 0.15, 0.8);
+    for (const k in peaks) delete peaks[k];
+    for (const k in rest){ delete rest[k]; delete restN[k]; }
+    return seen;
+  }
+  function resetThresholds(){ for (const tr of TRIGGERS) for (const c of tr.cues){ c.on = c.def.on; c.off = c.def.off; } squatRef = 0.35; }
+
+    /* ---------- framing check ----------
+     Looks at one frame and returns the single most useful instruction.
+     frame: "full" (head to ankles) or "knees" (head to knees).
+     reach: also require both hands overhead to fit. */
+  const MARGIN = 0.03;
+  function framing(frame, opts = {}){
+    const tNow = opts.now ?? performance.now()/1000;
+    if (!img || tNow - lastPoseAt > 0.6) return {ok: false, code: "none", say: "Step in front of the camera"};
+    const L = i => img[i], vis = (i, v = 0.6) => img[i].v >= v;
+    const nose = L(LM.nose), sh = mid2(L(LM.lSh), L(LM.rSh)), hip = mid2(L(LM.lHip), L(LM.rHip));
+    if (!vis(LM.lSh, 0.5) || !vis(LM.rSh, 0.5) || !vis(LM.lHip, 0.5) || !vis(LM.rHip, 0.5)) return {ok: false, code: "back", say: "Step back"};
+    const headTop = nose.y - 0.55*Math.max(0.02, sh.y - nose.y);
+    const anchors = frame === "full" ? [LM.lAn, LM.rAn] : [LM.lKn, LM.rKn];
+    const anchorY = Math.max(L(anchors[0]).y, L(anchors[1]).y);
+    const topRoom = headTop - MARGIN, botRoom = (1 - MARGIN) - anchorY;
+    const topOK = vis(LM.nose) && topRoom >= 0, botOK = anchors.every(i => vis(i, 0.5)) && botRoom >= 0;
+    const r = {ok: false, headTop, anchorY, cx: hip.x, anchors};
+    const say = (code, text) => Object.assign(r, {code, say: text});
+    if (!topOK && !botOK) return say("back", "Step back");
+    if (!topOK) return botRoom > 0.12 ? say("tiltUp", "Tilt the camera up") : say("back", "Step back");
+    if (!botOK) return topRoom > 0.12 ? say("tiltDown", "Tilt the camera down") : say("back", "Step back");
+    if (hip.x < 0.35) return say("left", "Step left");      // the picture isn't mirrored: image left is the player's right
+    if (hip.x > 0.65) return say("right", "Step right");
+    if (anchorY - headTop < (frame === "full" ? 0.55 : 0.45)) return say("closer", "Step closer");
+    if (opts.reach){
+      const wr = [L(LM.lWr), L(LM.rWr)];
+      if (!wr.every(w => w.y < nose.y - 0.02)) return say("reach", "Reach both arms up high");
+      const top = Math.min(wr[0].y, wr[1].y), xs = [wr[0].x, wr[1].x];
+      if (!wr.every(w => w.v >= 0.5) || top < MARGIN) return botRoom > 0.1 ? say("tiltUp", "Tilt the camera up") : say("back", "Step back");
+      if (Math.min(...xs) < MARGIN || Math.max(...xs) > 1 - MARGIN) return say("back", "Step back");
+    }
+    return Object.assign(r, {ok: true, code: "ok", say: "Locked in"});
+  }
+
 
   function stop(){ if (stream){ stream.getTracks().forEach(tr => tr.stop()); stream = null; } }
   return {
@@ -542,6 +617,7 @@ const BodyCore = (() => {
     get latency(){ return latency; },
     setLatency(v){ latency = clamp(v, 0, 0.6); },
         MODES, detectDevice, pickMode, openCamera, partnerMode,
+    framing, captureStart, captureStop, applyMoveTest, resetThresholds,
     attach(videoEl){ video = videoEl; },
 
   };
@@ -669,31 +745,125 @@ window.addEventListener("keydown", e => {
   else if (e.code === "Escape") pause();
 });
 
-/* ============ body play glue (uses body core) ============ */
-let calibHold = 0;
-function bodyVisible(){
-  const P = BodyCore.pose, L = BodyCore.LM;
-  if (!P || now() - BodyCore.lastPoseAt > 0.5) return false;
-  const need = [L.nose, L.lSh, L.rSh, L.lHip, L.rHip, L.lKn, L.rKn].concat(camMode && camMode.frame === "full" ? [L.lAn, L.rAn] : []);
-  return need.every(i => P.img[i].v > 0.5);
+/* ============ startup sequence: framing check, move test, latency check ============ */
+const MOVE_TEST = [
+  {big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }},
+  {big: "High knees!", small: "Sprint in place.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
+  {big: "Hop left", small: "", say: "Hop left.", secs: 1.6, cap: ["hop"]},
+  {big: "Hop right", small: "", say: "Hop right.", secs: 1.6, cap: ["hop"]},
+  {big: "Squat", small: "Drop your hips and hold.", say: "Squat.", secs: 2.0, cap: ["level"]},
+  {big: "Stiff arm!", small: "Punch one arm straight out.", say: "Stiff arm. Punch one arm out.", secs: 1.6, cap: ["punch"]},
+];
+const MOVE_NAMES = {step: "high knees", hop: "hop", level: "squat", punch: "stiff arm"};
+const BEAT = 0.9;
+const setup = {active: false, phase: null, full: true, okFor: 0, lastCode: "", lastSay: 0, step: 0, stepT: 0, stepLen: 1, beats: [], heard: [], hits: [], frame: null, note: ""};
+function coach(big, small){ $("calibTitle").textContent = big; $("calibMsg").textContent = small || ""; }
+function sayCoach(code, text){ const t = now(); if (code !== setup.lastCode || t - setup.lastSay > 4){ setup.lastCode = code; setup.lastSay = t; say(text, true); } }
+const frameHint = () => camMode.frame === "full" ? "Head to feet should fit, with a little room to spare." : "Head to knees should fit, with a little room to spare.";
+function beginSetup(full){
+  Object.assign(setup, {active: true, phase: "frame", full, okFor: 0, lastCode: "", lastSay: 0, step: 0, stepT: 0, beats: [], heard: [], hits: [], frame: null, note: ""});
+  calibrating = true; $("calibScreen").hidden = false;
+  coach("Get in frame", `Stand ${camMode.dist} from the camera.`);
 }
-function updateCalib(dt){
-  if (!bodyVisible()){ calibHold = 0;
-    $("calibTitle").textContent = "Get in frame";
-    const part = camMode && camMode.frame === "full" ? "feet" : "knees";
-    $("calibMsg").textContent = BodyCore.pose ? `Almost. Step back until your ${part} are in the picture too.` : `Stand facing the camera, ${camMode ? camMode.dist : "about 4 ft"} back.`;
-    return false; }
-  calibHold += dt;
-  const left = Math.ceil(2.5 - calibHold);
-  $("calibTitle").textContent = left > 0 ? `Hold still... ${left}` : "Ready!";
-  $("calibMsg").textContent = "Stand tall in your normal stance.";
-  if (calibHold < 2.5) return false;
-  return BodyCore.calibrateStand();
+function orientationIssue(){
+  const portrait = innerHeight > innerWidth;
+  if ((camMode.orient === "portrait") === portrait) return null;
+  const partner = BodyCore.partnerMode(camMode.key);
+  if (partner){ camMode = Object.assign({}, camMode, BodyCore.MODES[partner], {key: partner}); setup.okFor = 0; return null; }   // same camera, turned the other way
+  return camMode.orient === "landscape"
+    ? ["Turn the phone sideways", "If the picture doesn't rotate, turn off rotation lock in Control Center."]
+    : ["Stand the phone upright", "This setup uses the phone standing upright."];
 }
+function updateSetup(dt){
+  const t = now(), S = setup;
+  if (S.phase === "frame" || S.phase === "reach"){
+    const o = orientationIssue();
+    if (o){ coach(o[0], o[1]); sayCoach("orient", o[0]); S.okFor = 0; S.frame = null; return; }
+    const f = BodyCore.framing(camMode.frame, {reach: S.phase === "reach" && camMode.frame === "full", now: t});
+    S.frame = f;
+    if (!f.ok){
+      S.okFor = 0;
+      coach(f.say, f.code === "none" ? `Stand ${camMode.dist} from the camera.` : f.code === "reach" ? "Your hands need to fit on screen too." : frameHint());
+      sayCoach(f.code, f.say); return;
+    }
+    S.okFor += dt;
+    if (S.phase === "frame"){
+      coach("Hold it there", "");
+      // overhead reach is checked in full-body modes; at knees-up distances (~4 ft) raised hands can't fit,
+      // and HH has no overhead moves, so knees-up modes lock without it
+      if (S.okFor >= 1){ BodyCore.calibrateStand(0.8); S.phase = "reach"; S.okFor = camMode.frame === "full" ? 0 : 99; S.lastCode = ""; }
+    } else if (S.okFor >= 0.5){
+      coach("Locked in", ""); sayCoach("ok", "Locked in.");
+      if (S.full){ S.phase = "movetest"; S.step = -1; S.stepT = 1.2; S.stepLen = 1.2; }
+      else { S.phase = "stand"; S.stepT = S.stepLen = 2; coach("Stand tall", "Resetting your center."); }
+    }
+    return;
+  }
+  if (S.phase === "stand"){
+    S.stepT -= dt;
+    if (S.stepT <= 0){ BodyCore.calibrateStand(1.2); finishSetup(); }
+    return;
+  }
+  if (S.phase === "movetest"){
+    S.stepT -= dt;
+    if (S.stepT > 0) return;
+    const cur = MOVE_TEST[S.step];
+    if (cur){ BodyCore.captureStop(); if (cur.end) cur.end(); }
+    const next = MOVE_TEST[++S.step];
+    if (next){ S.stepT = S.stepLen = next.secs; BodyCore.captureStart(next.cap); coach(next.big, next.small); say(next.say, true); return; }
+    const seen = BodyCore.applyMoveTest();
+    const missed = Object.keys(MOVE_NAMES).filter(k => !seen[k]).map(k => MOVE_NAMES[k]);
+    S.note = missed.length ? `Didn't catch your ${missed.join(", ")}, so those use standard settings.` : "All four moves tuned to you.";
+    S.phase = "latIntro"; S.stepT = S.stepLen = 3.4;
+    coach("Punch on the beat", "Four clicks to count in, then a stiff arm on each of the next four beats.");
+    say("Punch on the beat. Four counts, then punch on every beat.", true);
+    return;
+  }
+  if (S.phase === "latIntro"){
+    S.stepT -= dt;
+    if (S.stepT <= 0){
+      const T0 = t + 0.4, ol = AC ? (AC.outputLatency || AC.baseLatency || 0) : 0;
+      S.beats = Array.from({length: 8}, (_, i) => T0 + i*BEAT);
+      S.heard = S.beats.map(b => b + ol);           // when the sound actually leaves the speaker
+      S.beats.forEach((b, i) => i < 4 ? tone(660, 660, 0.06, 0.25, "square", b - t) : tone(1320, 1320, 0.1, 0.4, "square", b - t));
+      S.hits = []; S.phase = "latency"; S.stepT = S.stepLen = 8*BEAT + 1.0;
+    }
+    return;
+  }
+  if (S.phase === "latency"){
+    S.stepT -= dt;
+    const passed = S.beats.filter(b => t >= b).length;
+    coach(passed === 0 ? "Ready" : passed <= 4 ? String(passed) : "Punch!", passed <= 4 ? "Counting in..." : `Beat ${passed - 4} of 4`);
+    if (S.stepT > 0) return;
+    // match each punch beat to the nearest punch the camera saw; the median gap is camera plus screen delay
+    const deltas = [];
+    for (const b of S.heard.slice(4)){
+      let best = null;
+      for (const h of S.hits){ const d = h - b; if (d > -0.3 && d < 0.9 && (best == null || Math.abs(d - 0.2) < Math.abs(best - 0.2))) best = d; }
+      if (best != null) deltas.push(best);
+    }
+    let L, note;
+    if (deltas.length >= 2){
+      deltas.sort((x, y) => x - y); const m = deltas.length >> 1;
+      L = deltas.length % 2 ? deltas[m] : (deltas[m - 1] + deltas[m])/2; note = `Delay measured at ${Math.round(Math.max(0, L)*1000)} ms.`;
+    } else { L = camMode.key === "living_room" ? 0.35 : 0.15; note = `Couldn't time your punches, so using a typical ${Math.round(L*1000)} ms delay.`; }
+    BodyCore.setLatency(L);
+    S.phase = "done"; S.stepT = S.stepLen = 2.4;
+    coach("You're set", `${S.note} ${note}`); say("You're set.", true);
+    return;
+  }
+  if (S.phase === "done"){ S.stepT -= dt; if (S.stepT <= 0) finishSetup(); }
+}
+function finishSetup(){
+  setup.active = false; calibrating = false; $("calibScreen").hidden = true; BodyCore.drain();
+  if (recentering){ recentering = false; paused = false; last = 0; } else beginGame();
+}
+
 // turn body core events into game input; tEff already has the measured delay taken off
 function pumpBody(){
   for (const e of BodyCore.drain()){
-    if (!game || game.phase === "over" || calibrating || paused) continue;
+    if (setup.active){ if (setup.phase === "latency" && e.type === "punch") setup.hits.push(e.t); continue; }
+    if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t);
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }
     else if (e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }
@@ -758,6 +928,8 @@ function spawnDefense(){
 }
 
 /* ============ live play ============ */
+// measured camera plus screen delay; touch has none
+const LAT = () => mode === "body" ? BodyCore.latency : 0;
 function stepsPerSec(t){ while (input.steps.length && t - input.steps[0] > 1.2) input.steps.shift(); return input.steps.length/1.2; }
 function laggedX(p, lag, t){
   const h = p.xHist; for (let i=h.length-1;i>=0;i--) if (t - h[i].t >= lag) return h[i].x;
@@ -780,10 +952,11 @@ function endPlay(kind, extra){
   banner(gl, label, 2.4);
   if (gain >= 10) { sfx.cheer(); } else if (gain <= 0) sfx.groan();
 }
-function resolveContact(d, t){
+// tc is when contact happened on screen; with camera delay the call is made LAT later
+function resolveContact(d, t, tc = t){
   const g = game, p = g.p, dx = Math.abs(d.x - p.x);
   d.state = "resolved";
-  const sinceShoulder = t - p.lastShoulder, sinceStiff = t - p.lastStiff, sinceJuke = t - p.lastJuke;
+  const sinceShoulder = tc - p.lastShoulder, sinceStiff = tc - p.lastStiff, sinceJuke = tc - p.lastJuke;
   if (sinceShoulder < 0.5 && p.speed > 4.5){
     const chance = d.type === "DL" ? 0.45 : d.type === "LB" ? 0.72 : 0.88;
     if (Math.random() < chance){ d.state = "down"; d.vz = 6; p.speed *= 0.72; g.stats.trucks++; g.stats.broken++; sfx.pads(); g.shake = 0.5;
@@ -825,11 +998,12 @@ function updateLive(dt, t){
   p.z += p.speed*dt;
   p.xHist.push({t, x:p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
   // the line of scrimmage: run through the hole or get stuffed
-  if (prevZ < 0 && p.z >= 0 && !p.crossedLOS){
-    p.crossedLOS = true;
+  if (prevZ < 0 && p.z >= 0 && !p.crossedLOS){ p.crossedLOS = true; p.losAt = t; }
+  if (p.losAt != null && t >= p.losAt + LAT()){   // wait out the camera delay so a late cut into the hole still counts
+    const tc = p.losAt; p.losAt = null;
     const inScrum = Math.abs(p.x) < 4.8, inHole = Math.abs(p.x - g.play.hole) < 1.7;
     if (inScrum && !inHole){
-      if (t - p.lastShoulder < 0.6 && Math.random() < 0.4){ banner("Pushed the pile!", "", 1); sfx.pads(); p.speed *= 0.5; }
+      if (tc - p.lastShoulder < 0.6 && Math.random() < 0.4){ banner("Pushed the pile!", "", 1); sfx.pads(); p.speed *= 0.5; }
       else { p.z = 0.5; sfx.hit(); endPlay("stuffed"); return; }
     }
   }
@@ -839,6 +1013,11 @@ function updateLive(dt, t){
     d.anim += dt*8;
     if (d.state === "down"){ d.downT += dt; d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); continue; }
     if (d.state === "resolved") continue;
+    if (d.state === "contact"){   // committed to the tackle; hold until the delayed input window closes
+      d.z = Math.max(d.z, p.z + 0.4);
+      if (t >= d.contactAt + LAT()){ resolveContact(d, t, d.contactAt); if (g.phase !== "live") return; }
+      continue;
+    }
     if (g.t > -d.delay){ continue; }      // g.t counts down from 0 after the snap
     const lx = laggedX(p, d.react, t);
     const tx = lx, tz = p.z + p.speed*0.25;
@@ -847,7 +1026,10 @@ function updateLive(dt, t){
     vx = clamp(vx, -d.lat, d.lat);
     // linemen stay in the scrum until they shed the block
     d.x += vx*dt; d.z += vz*dt; d.vx = vx; d.vz = vz;
-    if (Math.abs(d.z - p.z) < 0.8 && Math.abs(d.x - p.x) < 1.6){ resolveContact(d, t); if (g.phase !== "live") return; }
+    if (Math.abs(d.z - p.z) < 0.8 && Math.abs(d.x - p.x) < 1.6){
+      if (LAT() > 0){ d.state = "contact"; d.contactAt = t; continue; }
+      resolveContact(d, t); if (g.phase !== "live") return;
+    }
   }
   g.t -= dt;
   // ends of the play
@@ -1148,7 +1330,48 @@ function drawPip(){
   cx.translate(x + pw, y); cx.scale(-1, 1); cx.drawImage(video, 0, 0, pw, ph); cx.restore();
   if (P){ cx.fillStyle = COL.gold; for (const k of ["nose","lSh","rSh","lHip","rHip","lKn","rKn","lWr","rWr"]){ const q = P.img[IDX[k]]; if (q.v < 0.5) continue; cx.beginPath(); cx.arc(x + (1-q.x)*pw, y + q.y*ph, 3, 0, 7); cx.fill(); } }
 }
+const BONES = [["lSh","rSh"],["lSh","lEl"],["lEl","lWr"],["rSh","rEl"],["rEl","rWr"],["lSh","lHip"],["rSh","rHip"],["lHip","rHip"],["lHip","lKn"],["lKn","lAn"],["rHip","rKn"],["rKn","rAn"]];
+const LMK = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lKn:25,rKn:26,lAn:27,rAn:28};
+function drawSetup(t){
+  cx.fillStyle = "#05080f"; cx.fillRect(0, 0, W, H);
+  const vw = video.videoWidth, vh = video.videoHeight; if (!vw || !vh) return;
+  // "contain", not "cover": what you see is exactly what the camera sees
+  const sc = Math.min(W/vw, H/vh), dw = vw*sc, dh = vh*sc, ox = (W - dw)/2, oy = (H - dh)/2;
+  cx.save(); cx.translate(ox + dw, oy); cx.scale(-1, 1); cx.drawImage(video, 0, 0, dw, dh); cx.restore();
+  cx.fillStyle = "rgba(5,8,15,.25)"; cx.fillRect(ox, oy, dw, dh);
+  const map = q => ({x: ox + (1 - q.x)*dw, y: oy + q.y*dh});
+  const f = setup.frame, good = f && f.ok;
+  const m = 0.03;
+  cx.setLineDash([12, 10]); cx.lineWidth = 3; cx.strokeStyle = good ? "rgba(90,220,120,.9)" : "rgba(255,255,255,.55)";
+  cx.strokeRect(ox + m*dw, oy + m*dh, dw*(1 - 2*m), dh*(1 - 2*m)); cx.setLineDash([]);
+  const P = BodyCore.pose;
+  if (P && now() - BodyCore.lastPoseAt < 0.6){
+    cx.strokeStyle = good ? "rgba(90,220,120,.95)" : "rgba(255,207,63,.9)"; cx.lineWidth = Math.max(4, dw*0.008); cx.lineCap = "round";
+    for (const [a, b] of BONES){ const p = P.img[LMK[a]], q = P.img[LMK[b]]; if (p.v > 0.4 && q.v > 0.4){ const A = map(p), B = map(q); cx.beginPath(); cx.moveTo(A.x, A.y); cx.lineTo(B.x, B.y); cx.stroke(); } }
+    const n = P.img[0]; if (n.v > 0.4){ const N = map(n); cx.beginPath(); cx.arc(N.x, N.y, dw*0.035, 0, 7); cx.stroke(); }
+    if (f && f.headTop != null){   // where the edges are being measured
+      cx.fillStyle = cx.strokeStyle;
+      const ht = map({x: P.img[0].x, y: f.headTop}); cx.fillRect(ht.x - 18, ht.y - 2, 36, 4);
+      for (const i of f.anchors){ const A = map(P.img[i]); cx.beginPath(); cx.arc(A.x, A.y, 7, 0, 7); cx.fill(); }
+    }
+  }
+  // timer bar for move test and beat steps
+  if (["movetest", "latIntro", "latency", "stand", "done"].includes(setup.phase)){
+    const u = clamp(1 - setup.stepT/setup.stepLen, 0, 1);
+    cx.fillStyle = "rgba(255,255,255,.15)"; cx.fillRect(16, H - 30, W - 32, 12);
+    cx.fillStyle = COL.gold; cx.fillRect(16, H - 30, (W - 32)*u, 12);
+  }
+  if (setup.phase === "latency"){   // beat flash
+    for (let i = 0; i < setup.beats.length; i++){
+      const d = t - setup.beats[i]; if (d < 0 || d > 0.35) continue;
+      const big = i >= 4, r = Math.min(W, H)*(big ? 0.22 : 0.12)*(1 + d);
+      cx.fillStyle = big ? `rgba(255,207,63,${0.7*(1 - d/0.35)})` : `rgba(255,255,255,${0.5*(1 - d/0.35)})`;
+      cx.beginPath(); cx.arc(W/2, H*0.58, r, 0, 7); cx.fill();
+    }
+  }
+}
 function render(t){
+  if (setup.active){ drawSetup(t); return; }
   const c = camState();
   cx.save();
   if (game && game.shake > 0){ cx.translate(rand(-1,1)*game.shake*12, rand(-1,1)*game.shake*12); }
@@ -1167,8 +1390,7 @@ function frame(ms){
   requestAnimationFrame(frame);
   const t = ms/1000, dt = Math.min(0.05, last ? t - last : 0); last = t;
   if (mode === "body"){ BodyCore.update(); pumpBody(); }
-  if (calibrating) updateDiag();
-  if (calibrating && updateCalib(dt)){ calibrating = false; $("calibScreen").hidden = true; if (recentering){ recentering = false; paused = false; last = 0; } else beginGame(); }
+  if (setup.active){ updateDiag(); updateSetup(dt); }
   update(dt);
   render(t);
 }
@@ -1212,9 +1434,9 @@ async function startBody(){
     status("Starting the camera...");
     const info = await BodyCore.openCamera(resolveMode(), video);
     camMode = info.mode; status("");
-    mode = "body"; keepAwake(); calibHold = 0;
+    mode = "body"; keepAwake(); BodyCore.resetThresholds(); BodyCore.setLatency(0);
     $("calibNote").textContent = info.notes.join(" "); $("calibNote").hidden = !info.notes.length;
-    $("setupScreen").hidden = true; $("calibScreen").hidden = false; calibrating = true;
+    $("setupScreen").hidden = true; beginSetup(true);
   }catch(e){
     let msg = "The camera didn't start. Reload and try again.";
     if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "Camera access was blocked. Allow the camera for this site in your browser settings, then reload.";
@@ -1240,16 +1462,22 @@ $("setupBack").addEventListener("click", () => { $("setupScreen").hidden = true;
 $("screenDevice").addEventListener("click", () => { screenChoice = "device"; renderSetup(); });
 $("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup(); });
 $("modeSel").addEventListener("change", renderSetup);
+$("calibBack").addEventListener("click", () => {
+  setup.active = false; calibrating = false; $("calibScreen").hidden = true; BodyCore.captureStop();
+  if (recentering){ recentering = false; paused = false; $("pauseScreen").hidden = false; paused = true; }
+  else { $("setupScreen").hidden = false; renderSetup(); }
+});
 window.addEventListener("resize", () => { if (!$("setupScreen").hidden) renderSetup(); });
 $("againBtn").addEventListener("click", () => { primeAudio(); beginGame(); });
 $("pauseBtn").addEventListener("click", e => { e.stopPropagation(); pause(); });
 $("resumeBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; last = 0; });
-$("recenterBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; if (mode === "body"){ calibHold = 0; calibrating = true; recentering = true; $("calibScreen").hidden = false; paused = true; } });
+$("recenterBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; if (mode === "body"){ recentering = true; paused = true; beginSetup(false); } });
 $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; endGame(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, set paused(v){ paused = v; } };
+window.__hh = { get game(){ return game; }, input, startTouch, set paused(v){ paused = v; }, setup,
+  testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();
 requestAnimationFrame(frame);
