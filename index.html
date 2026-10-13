@@ -123,7 +123,9 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     </dl>
     <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
-    <label class="toggle"><input type="checkbox" id="announcerOn" checked> Funny announcer</label>
+    <label class="pick" for="booth">Announcer
+      <select id="booth"><option value="dark">After dark: dark and blue</option><option value="family">Family: clean jokes</option><option value="off">Off</option></select>
+    </label>
     <label class="pick" for="voiceSel" id="voicePick" hidden>Voice
       <select id="voiceSel"></select>
     </label>
@@ -901,18 +903,26 @@ function loadVoices(){
   $("voiceTip").hidden = voiceScore(voices[0]) >= 30 || !/iPhone|iPad|Macintosh/.test(navigator.userAgent || "");
 }
 if (window.speechSynthesis){ loadVoices(); try{ speechSynthesis.addEventListener("voiceschanged", loadVoices); }catch(e){} }
-let lastSpoke = -9;
+let lastSpoke = -9, boothUntil = -9;
+// the booth has the floor until its line ends (estimated, then confirmed by onend)
+const boothTalking = () => now() < boothUntil;
+const speechSecs = text => text.length/14 + 0.3;
+// force: an important call (play calls, the snap count, setup coaching). It waits for the booth to finish
+// instead of cutting it off. Small coach calls ("Juked him!") are dropped while the booth is talking.
 function say(text, force){
   if (!$("voiceOn").checked || !window.speechSynthesis) return;
-  const t = now(); if (!force && t - lastSpoke < 1.6) return; lastSpoke = t;
-  speak(text, false);
+  const t = now(); if (!force && t - lastSpoke < 1.6) return;
+  if (boothTalking() && !force) return;
+  lastSpoke = t;
+  speak(text, false, boothTalking());
 }
 // the booth uses a different voice than the coach when the device has one, pitched up and quicker
 function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= voiceScore(voices[0]) - 12 && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
-function speak(text, booth){
+function speak(text, booth, queue){
   try{
-    if (!booth) speechSynthesis.cancel();
+    if (!booth && !queue) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text), v = booth ? boothVoice() : voice;
+    if (booth){ boothUntil = now() + speechSecs(text); u.onend = u.onerror = () => { boothUntil = Math.min(boothUntil, now()); }; }
     if (v){ u.voice = v; u.lang = v.lang; }
     const natural = v && voiceScore(v) >= 30;
     u.rate = booth ? (natural ? 1.12 : 1.2) : natural ? 1.05 : 1.12; u.pitch = booth ? 1.15 : 0.95;   // natural voices already speak briskly
@@ -990,32 +1000,108 @@ const CALLS = {
   loss: ["Tough loss. But the real win is the muscle soreness you'll have tomorrow.",
     "Final score. Not the result we wanted, but those legs got stronger tonight."]
 };
+// After dark (the default): the same moments, darker and bluer. Innuendo, mortality, bodily fluids, regret.
+// The joke is never the player's body or anyone's identity.
+const CALLS_DARK = {
+  open: ["Welcome to homecoming, where dreams come true and hamstrings go to die.",
+    "Good evening. Tonight's game is brought to you by regret, ibuprofen, and whatever is about to leak out of our running back.",
+    "The paramedics are here, the defibrillator is charged, and our running back signed the waiver without reading it. Let's play some football!",
+    "Welcome, everybody. If you're new here, the safe word is touchdown."],
+  huddle: ["Our running back is sweating like a sinner in church.",
+    "Breathe in through the nose, out through whatever still works.",
+    "That's the hardest anybody in this stadium has breathed since prom night.",
+    "The trainer says that noise is normal. The trainer has been wrong before. Ask his ex-wife.",
+    "That's not sweat, folks. That's every excuse you ever made, leaving the building.",
+    "Fun fact: the human body is sixty percent water. Give it ten more plays.",
+    "Somewhere, a treadmill is laughing at all of us.",
+    "Our back is breathing like an obscene phone call.",
+    "The concession stand is out of nachos and the medical tent is out of hope."],
+  third: ["Third and long. That's what she said.",
+    "Third down. Squeeze everything. Glutes, core, the armrest of life.",
+    "Third and long. The legs say no. The scoreboard says shut up, legs.",
+    "Third down, folks. This is where boys become men and men become sore."],
+  bigRun: ["Look at that! Running like an ex just showed up with a lawyer!",
+    "Go! Go! Death is chasing you, and death skipped leg day!",
+    "Running like there's free wings at the end zone and a bar tab at the forty!",
+    "Those knees are pumping harder than a teenager's search history!",
+    "Fastest thing in this stadium since the halftime show's wardrobe malfunction!"],
+  td: ["Touchdown! Somebody light a cigarette, because that was intimate!",
+    "Touchdown! Spike it like your blood pressure!",
+    "Six points! When the obituary runs, it'll say they died doing what they loved: wheezing!",
+    "Touchdown! That's the most anyone has scored in this town all year!",
+    "Touchdown! Hug a stranger! Actually don't, you're moist!"],
+  juke: ["Juked so hard the defender's ancestors felt it!",
+    "Ankles: deceased. The funeral is Tuesday. Closed casket.",
+    "That linebacker got left like a voicemail from Mom.",
+    "Juke! That defender's going to need therapy and a new hip."],
+  truck: ["Trucked! Somebody call his mother, and maybe a priest!",
+    "Ran him over like a raccoon on the interstate!",
+    "Trucked! That's going on his tombstone, right under 'beloved'!"],
+  stiff: ["Stiff arm! Stiffest thing in this stadium, and I've seen the concession pretzels.",
+    "Get off me! The stiff arm: also my approach to dating.",
+    "Stiff arm to the face! That's a restraining order with extra steps."],
+  stuffed: ["Stuffed! Like a Thanksgiving turkey, and just as sweaty.",
+    "The hole closed faster than my gym membership.",
+    "Stopped cold. That's the hole saying it's not you, it's me. It's you.",
+    "No gain. Even the cheerleaders look disappointed, and they're paid to lie.",
+    "Nothing there. Like my retirement account."],
+  slow: ["Pick those knees up! The defense is coming, and so is cardiac arrest!",
+    "Slowest knees I've seen outside a retirement home pool party!",
+    "Move! You're running like your pants are full of regret!",
+    "Faster! The grim reaper is jogging, and he's gaining!"],
+  fast: ["Look at those knees! Pumping like a frat house keg!",
+    "That's the most action those knees have seen in years!",
+    "The heart rate monitor just filed a complaint with HR!"],
+  first: ["First down! The first thing that's gone right all week!",
+    "Move the chains! Tighter than my jeans after Thanksgiving!"],
+  sack: ["Sacked! The quarterback is going to feel that in his will.",
+    "Sack! The quarterback saw a bright light and his dead grandmother.",
+    "Sacked so hard his fantasy owners felt it."],
+  clean: ["Clean pocket! Cleaner than anything in the locker room showers.",
+    "What a block! The quarterback could've ordered dinner back there and tipped."],
+  catch: ["Soft hands! I'd let those hands do my taxes.",
+    "Caught it! Clutching that ball like the last donut at the office!"],
+  drop: ["Dropped it! The ball was there. The ball was always there. Like your problems.",
+    "Dropped! Butterfingers. Butter everything, really."],
+  oppScore: ["Raiders score. Use that anger. Anger burns calories. So does crying.",
+    "The Raiders score, and somewhere their coach is smiling. Terrifying. Nobody's seen his teeth since 1998."],
+  half: ["Halftime! Hydrate, stretch, and tell your loved ones where the will is.",
+    "Halftime. Somewhere in the band, a tuba player is sweating less than you."],
+  win: ["Ballgame! Mustangs win! Tomorrow you'll need help getting off the toilet, but tonight you're a legend!",
+    "That's the final! You won, and your knees have filed for divorce."],
+  loss: ["Tough loss. The good news: the soreness tomorrow won't care who won.",
+    "Final score. You lost the game but found muscles you didn't know you had. They hate you."]
+};
 const callBags = {}, annQ = [];
 let annLast = -99;
+const boothMode = () => { const v = $("booth").value; return v === "off" || v === "family" ? v : "dark"; };
 function pickCall(kind){
-  const L = CALLS[kind]; let b = callBags[kind];
-  if (!b || !b.length){ b = callBags[kind] = L.map((_, i) => i); for (let i = b.length - 1; i > 0; i--){ const j = Math.floor(Math.random()*(i + 1)); [b[i], b[j]] = [b[j], b[i]]; } }
+  const set = boothMode() === "family" ? CALLS : CALLS_DARK, L = set[kind] || CALLS[kind], key = boothMode() + kind; let b = callBags[key];
+  if (!b || !b.length){ b = callBags[key] = L.map((_, i) => i); for (let i = b.length - 1; i > 0; i--){ const j = Math.floor(Math.random()*(i + 1)); [b[i], b[j]] = [b[j], b[i]]; } }
   return L[b.pop()];
 }
 // kind: a CALLS key. o.force skips the chance and the cooldown; o.delay waits in seconds; o.chance 0..1
 function announce(kind, o = {}){
-  if (!$("announcerOn").checked || !$("voiceOn").checked || !window.speechSynthesis) return false;
+  if (boothMode() === "off" || !$("voiceOn").checked || !window.speechSynthesis) return false;
   const t = now();
   if (!o.force && (Math.random() > (o.chance ?? 1) || t - annLast < 8)) return false;
   annLast = t;
   annQ.push({kind, text: pickCall(kind), at: t + (o.delay || 0), until: t + (o.delay || 0) + (o.force ? 6 : 3.5)});
   return true;
 }
+// The booth talks in the gaps: after the whistle, in the huddle once the play call is done, and during a
+// run for the quick reactions. A line only starts if it can finish before the next call: in the huddle the
+// snap count waits up to a second and a half for it (3 at most), and it never starts during the count. Pre-snap chatter that doesn't fit is dropped.
+const LIVE_OK = new Set(["slow", "fast", "juke", "truck", "stiff", "catch"]);
 function announcerTick(){
   if (!annQ.length) return;
-  const t = now();
-  // huddle chatter has to finish before the snap count, or it waits for the next huddle
-  const preSnap = k => k === "open" || k === "huddle" || k === "third";
-  const roomy = game && game.phase === "huddle" && game.t > 3.2;
-  while (annQ.length && (t > annQ[0].until || (preSnap(annQ[0].kind) && !roomy))) annQ.shift();
-  if (!annQ.length || t < annQ[0].at) return;
+  const t = now(), g = game, q = annQ[0], secs = speechSecs(q.text);
+  const preSnap = q.kind === "open" || q.kind === "huddle" || q.kind === "third";
+  const fits = !g ? true : g.phase === "huddle" ? g.t + 1.5 - secs > 0 : g.phase === "cadence" ? false : g.phase === "live" ? LIVE_OK.has(q.kind) : true;
+  if (t > q.until || (preSnap && g && g.phase !== "huddle")){ annQ.shift(); return; }
+  if (t < q.at || !fits) return;
   let busy = false; try{ busy = speechSynthesis.speaking || speechSynthesis.pending; }catch(e){}
-  if (busy || t - lastSpoke < 0.4) return;
+  if (busy || boothTalking() || t - lastSpoke < 0.4) return;
   speak(annQ.shift().text, true);
 }
 
@@ -1267,8 +1353,11 @@ function startHuddle(newDrive){
   updateBoard();
   if (g.playType === "run") banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
   else playCard();
-  say(g.play.say);
-  if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0) announce("open", {force: true, delay: 0.2});
+  say(g.play.say, true);
+  if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0){
+    // the welcome gets its own time: the first huddle stretches to fit it after the play call
+    if (announce("open", {force: true, delay: 0.2})){ const x = speechSecs(annQ[annQ.length - 1].text) + speechSecs(g.play.say); g.t = g.huddleLen = Math.max(g.huddleLen, x + 1); annQ[annQ.length - 1].until += x; }
+  }
   else if (g.down === 3 && g.toGo >= 5) announce("third", {chance: 0.6, delay: 0.2});
   else announce("huddle", {chance: 0.3, delay: 0.2});
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
@@ -1805,7 +1894,9 @@ function update(dt){
   if (g.phase === "huddle"){
     const was = g.huddleLen - g.t; g.t -= dt;
     if (was < 3 && g.huddleLen - g.t >= 3){ if (g.huddleLen >= 8 && Math.random() < 0.6) sfx.chant(); else if (Math.random() < 0.4) sfx.drumline(); }
-    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; $("playCard").hidden = true; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
+    // the snap count waits (up to 3 s) for the booth to finish its line
+    if (g.t <= 0 && boothTalking() && (g.holdT = (g.holdT || 0) + dt) < 3) g.t = 0.01;
+    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; g.holdT = 0; $("playCard").hidden = true; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
   } else if (g.phase === "cadence"){
     g.t -= dt;
     if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
@@ -2755,6 +2846,8 @@ $("setupBack").addEventListener("click", () => { $("setupScreen").hidden = true;
 $("screenDevice").addEventListener("click", () => { screenChoice = "device"; renderSetup(); });
 $("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup(); });
 $("modeSel").addEventListener("change", renderSetup);
+try{ const b = localStorage.getItem("hhBooth"); if (b) $("booth").value = b; }catch(e){}
+$("booth").addEventListener("change", e => { try{ localStorage.setItem("hhBooth", e.target.value); }catch(err){} });
 $("voiceSel").addEventListener("change", e => {
   voice = voices.find(v => v.voiceURI === e.target.value) || voice;
   try{ localStorage.setItem("hhVoice", voice.voiceURI); }catch(e){}
