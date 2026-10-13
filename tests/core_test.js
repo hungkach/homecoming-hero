@@ -2,7 +2,7 @@
 // Usage: node tests/core_test.js index.html [distanceMeters] [cameraTiltDeg]
 const fs = require("fs"), vm = require("vm");
 const html = fs.readFileSync(process.argv[2], "utf8");
-const core = html.match(/<script>\n\/\* =+\n   body core v0\.1  \(start\)[\s\S]*?<\/script>/)[0].replace(/^<script>|<\/script>$/g, "");
+const core = html.match(/<script>\n\/\* =+\n   body core v0\.\d+  \(start\)[\s\S]*?<\/script>/)[0].replace(/^<script>|<\/script>$/g, "");
 vm.runInThisContext(core + "\nglobalThis.BodyCore = BodyCore;");
 const D = +(process.argv[3] || 1.5), TILT = +(process.argv[4] || 0) * Math.PI/180;
 const VW = 640, VH = 480, FX = 0.714, FY = FX*VW/VH;
@@ -91,6 +91,21 @@ results.punchR = section("guard, two right stiff arms", 2, u => { const P = stan
   const k = Math.max(ease((u - 0.3)/0.12) * (u < 0.9 ? 1 : 1 - ease((u - 0.9)/0.2)), u > 1.3 ? ease((u - 1.3)/0.12) : 0);
   P.rEl = [-0.2 + 0.03*k, -0.3 - 0.17*k, -0.15 - 0.16*k]; P.rWr = [-0.15, -0.45, -0.28 - 0.34*k];
   return {P, off: {x:0, y:0}}; });
+// lateral raise: arm swings out to the side, up to shoulder height (person frame: +x is the person's left)
+function raiseArm(P, side, k){ const sh = P[side + "Sh"], sx = side === "l" ? 1 : -1, a = k*Math.PI/2*0.95;
+  P[side + "El"] = [sh[0] + sx*0.26*Math.sin(a), sh[1] + 0.26*Math.cos(a), 0]; P[side + "Wr"] = [sh[0] + sx*0.5*Math.sin(a), sh[1] + 0.5*Math.cos(a), 0]; }
+const pulse = (u, t0, up = 0.25, hold = 0.35) => u < t0 ? 0 : u < t0 + up ? ease((u - t0)/up) : u < t0 + up + hold ? 1 : 1 - ease((u - t0 - up - hold)/0.3);
+results.raiseL = section("raise left arm out, twice", 2.6, u => { const P = standing(); raiseArm(P, "l", Math.max(pulse(u, 0.2), pulse(u, 1.4))); return {P, off: {x:0, y:0}}; });
+results.raiseR = section("raise right arm out", 1.4, u => { const P = standing(); raiseArm(P, "r", pulse(u, 0.2)); return {P, off: {x:0, y:0}}; });
+results.raiseB = section("raise both arms out", 1.4, u => { const P = standing(), k = pulse(u, 0.2); raiseArm(P, "l", k); raiseArm(P, "r", k); return {P, off: {x:0, y:0}}; });
+// truck: lower the head and shoulder, bending a little at the hips and knees
+results.duck = section("duck head and shoulders (truck)", 1.6, u => { const P = standing(), k = pulse(u, 0.2, 0.2, 0.3);
+  for (const j of ["nose","lEar","rEar"]) P[j] = [P[j][0], P[j][1] + 0.22*k, P[j][2] - 0.22*k];
+  for (const j of ["lSh","rSh","lEl","rEl","lWr","rWr"]) P[j] = [P[j][0], P[j][1] + 0.14*k, P[j][2] - 0.12*k];
+  thigh(P, "l", 15*k); thigh(P, "r", 15*k); return {P, off: {x:0, y: 0.04*k}}; });
+results.jump = section("jump", 1.6, u => { const P = standing(), h = u > 0.3 && u < 0.75 ? Math.sin(Math.PI*(u - 0.3)/0.45) : 0;
+  return {P, off: {x:0, y: -0.18*h}}; });
+results.calm3 = section("stand", 1, stand);
 results.over = section("both arms overhead", 1.5, u => { const P = standing(), k = ease(u/0.3);
   P.lEl = [0.25, -0.22 - 0.6*k, 0]; P.rEl = [-0.25, -0.22 - 0.6*k, 0]; P.lWr = [0.25, 0.02 - 1.12*k, 0]; P.rWr = [-0.25, 0.02 - 1.12*k, 0];
   return {P, off: {x:0, y:0}}; });
@@ -108,6 +123,14 @@ const checks = [
   ["squat fires one level change", n(results.squat, "level") === 1],
   ["two right stiff arms, no left (fist may leave frame when close and tilted)", n(results.punchR, "punchR") >= (D < 2 && TILT < 0 ? 1 : 2) && !n(results.punchR, "punchL")],
   ["arms overhead fires once" + (D < 2 ? " (skipped: wrists leave frame this close)" : ""), D < 2 || n(results.over, "overhead") === 1],
+  ["no raise, duck, or jump during high knees", !Object.keys(results.knees).some(k => /^(raise|duck|jump)/.test(k))],
+  ["no jump or raise during hops", !Object.keys({...results.hopR, ...results.hopL, ...results.back, ...results.back2}).some(k => /^(jump|raise)/.test(k))],
+  ["left arm raise fires twice, only left", n(results.raiseL, "raiseL") === 2 && !n(results.raiseL, "raiseR")],
+  ["right arm raise fires once, only right", n(results.raiseR, "raiseR") === 1 && !n(results.raiseR, "raiseL")],
+  ["both arms raise fires both sides", n(results.raiseB, "raiseL") === 1 && n(results.raiseB, "raiseR") === 1],
+  ["arm raises don't punch", !Object.keys({...results.raiseL, ...results.raiseR, ...results.raiseB}).some(k => k.startsWith("punch"))],
+  ["duck fires once, no jump", n(results.duck, "duck") === 1 && !n(results.duck, "jump")],
+  ["jump fires once, no hop or duck", n(results.jump, "jump") === 1 && !n(results.jump, "hop<") && !n(results.jump, "hop>") && !n(results.jump, "duck")],
   ["no stray rip or swim", !Object.keys({...results.punchR, ...results.over}).some(k => k.startsWith("rip") || k.startsWith("swim"))],
 ];
 let fail = 0;

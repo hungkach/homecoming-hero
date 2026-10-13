@@ -1,7 +1,7 @@
 // Mocks cameras to check the living room fallback chain and auto-pick. Usage: node tests/camera_test.js index.html
 const fs = require("fs"), vm = require("vm");
 const html = fs.readFileSync(process.argv[2], "utf8");
-const core = html.match(/<script>\n\/\* =+\n   body core v0\.1  \(start\)[\s\S]*?<\/script>/)[0].replace(/^<script>|<\/script>$/g, "");
+const core = html.match(/<script>\n\/\* =+\n   body core v0\.\d+  \(start\)[\s\S]*?<\/script>/)[0].replace(/^<script>|<\/script>$/g, "");
 function setup(cams, {envFails = false, zoomMin = null} = {}){
   const track = (label, facing) => ({label, stop(){}, getSettings: () => ({deviceId: label, facingMode: facing, width: 640, height: 480, zoom: 1}),
     getCapabilities: () => (zoomMin != null ? {zoom: {min: zoomMin, max: 10}} : {}), applyConstraints: async () => {}});

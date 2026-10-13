@@ -198,7 +198,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 
 <script>
 /* =====================================================================
-   body core v0.1  (start)
+   body core v0.2  (start)
    Shared camera body tracking for the body arcade games.
    Copy this whole <script> block into another game. It uses no game
    globals; the game reads BodyCore.state, drains BodyCore events, and
@@ -206,7 +206,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
    ===================================================================== */
 const BodyCore = (() => {
   "use strict";
-  const VERSION = "0.1";
+  const VERSION = "0.2";
   const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const TARGET_FPS = 30;
@@ -341,7 +341,7 @@ const BodyCore = (() => {
   let img = null, wld = null, vw = 640, vh = 480, lastPoseAt = -9;
   const hist = [];      // derived frames, last 0.8 s
   const recent = [];    // smoothed raw frames, last 2 s, for calibration
-  const base = {ok: false, torso: 0, cx: 0, hipY: 0, shY: 0, knY: [0, 0], up: {x: 0, y: -1, z: 0}, pitch: [0, 0], yaw: 0};
+  const base = {ok: false, torso: 0, cx: 0, hipY: 0, shY: 0, noseY: 0, knY: [0, 0], up: {x: 0, y: -1, z: 0}, pitch: [0, 0], yaw: 0};
   const state = {visible: false, stance: 0, depth: 0, cadence: 0, lateral: 0, turn: 0, overhead: false, overheadSince: 0};
   let events = [], latency = 0, stepTimes = [], squatRef = 0.35;
   const lastHop = {dir: 0, t: -9};
@@ -370,6 +370,14 @@ const BodyCore = (() => {
     F.lat = (cx - hip.x)/T;                                   // + is the player's right
     F.hipDrop = base.ok ? (hip.y - base.hipY)/T : 0;
     F.shDrop = base.ok ? (sh.y - base.shY)/T : 0;
+    F.noseOK = seen(LM.nose);
+    F.headDrop = base.ok && F.noseOK ? (px(LM.nose).y - base.noseY)/T : 0;   // + is down
+    // arm raised out to the side, from image landmarks: the side is the picture's plane, which the camera sees best.
+    // The picture isn't mirrored, so the player's left arm is on image right (+x).
+    F.raise = [0, 1].map(s => {
+      const out = s ? -1 : 1, S = px(s ? LM.rSh : LM.lSh), E = px(s ? LM.rEl : LM.lEl), Wr = px(s ? LM.rWr : LM.lWr);
+      return {out: out*(Wr.x - S.x)/T, high: (S.y - Wr.y)/T, elOut: out*(E.x - S.x)/T, ok: img[s ? LM.rWr : LM.lWr].v >= 0.3, elOK: img[s ? LM.rEl : LM.lEl].v >= 0.3};
+    });
     const kn = [px(LM.lKn), px(LM.rKn)], an = [px(LM.lAn), px(LM.rAn)];
     F.knOK = [seen(LM.lKn), seen(LM.rKn)];
     F.ankOK = seen(LM.lAn) && seen(LM.rAn);
@@ -463,7 +471,7 @@ const BodyCore = (() => {
     {id: "straight", on: 0.88, off: 0.75, calib: false, fn: F => wld && F.wrOK[s] ? F.arm[s].ext : null},
     {id: "snap", on: 1.4, off: 0.3, calib: true, fn: F => wld && F.wrOK[s] ? rate(F, 0.1, G => G.arm[s].ext) : null},
     {id: "reach", on: 0.42, off: 0.28, calib: true, fn: F => wld && F.wrOK[s] ? F.arm[s].reach : null}
-  ], {gate: F => F.arm[s].upAng > 50 && F.arm[s].upAng < 140});
+  ], {gate: F => F.arm[s].upAng > 50 && F.arm[s].upAng < 140 && Math.abs(F.wrSide[s]) < 0.6});   // far out to the side is a raise
   // rip and swim: block-shedding arm moves
   const startedLow = (F, s) => hist.some(P => F.t - P.t <= 0.5 && P.wrUp[s] < -0.75);
   const lift = (F, s) => rate(F, 0.12, G => G.wrUp[s]);
@@ -473,7 +481,7 @@ const BodyCore = (() => {
       {id: "lift", on: 2.5, off: 0.8, calib: false, fn: F => wld && F.wrOK[s] ? lift(F, s) : null},
       {id: "high", on: 0.05, off: -0.2, calib: false, fn: F => wld && F.wrOK[s] ? F.wrUp[s] : null},
       {id: "elbow", on: -0.1, off: -0.4, calib: false, fn: F => wld ? F.elUp[s] : null}
-    ], {gate: F => startedLow(F, s) && lift(F, o) < 1.2 && !(F.wrAboveNose[o] > 0.15)});   // both arms rising is overhead, not a rip
+    ], {gate: F => startedLow(F, s) && lift(F, o) < 1.2 && !(F.wrAboveNose[o] > 0.15) && Math.abs(F.wrSide[s]) < 0.6});   // both arms rising is overhead; out to the side is a raise
     trigger("swim", SIDE[s], [
       {id: "over", on: 0.15, off: -0.05, calib: false, fn: F => wld && F.wrOK[s] ? F.wrAboveNose[s] : null},
       {id: "cross", on: 0.15, off: -0.1, calib: false, fn: F => wld && F.wrOK[s] ? (s === 0 ? F.wrSide[s] : -F.wrSide[s]) : null},
@@ -486,6 +494,26 @@ const BodyCore = (() => {
     {id: "right", on: 0.25, off: 0.05, calib: false, fn: F => wld && F.wrOK[1] ? F.wrAboveNose[1] : null},
     {id: "elbows", on: 0.2, off: 0, calib: false, fn: F => wld ? (F.elUp[0] + F.elUp[1])/2 : null}
   ]);
+
+  // arm raise (a lateral raise): the arm swings out to the side to about shoulder height.
+  // Games use one arm for a stiff arm and both together for a block.
+  for (const s of S2) trigger("raise", SIDE[s], [
+    {id: "out", on: 0.65, off: 0.4, calib: true, fn: F => F.raise[s].ok ? F.raise[s].out : null},
+    {id: "high", on: -0.35, off: -0.7, calib: true, fn: F => F.raise[s].ok ? F.raise[s].high : null},
+    {id: "elbow", on: 0.3, off: 0.18, calib: true, fn: F => F.raise[s].elOK ? F.raise[s].elOut : null}
+  ], {gate: F => !(F.raise[s].ok && F.raise[s].high > 1.2)});   // straight overhead is a reach, not a raise
+  // duck: the head and shoulders drop fast, as when you lower a shoulder into a tackler
+  trigger("duck", null, [
+    {id: "head", on: 0.3, off: 0.12, calib: true, fn: F => F.ok && F.noseOK ? F.headDrop : null},
+    {id: "speed", on: 1.2, off: 0.3, calib: true, fn: F => F.ok && F.noseOK ? rate(F, 0.15, G => G.headDrop) : null},
+    {id: "shoulders", on: 0.2, off: 0.08, calib: true, fn: F => F.ok ? F.shDrop : null}
+  ]);
+  // jump: hips and head go up together, fast, without a big sideways shift (that's a hop)
+  trigger("jump", null, [
+    {id: "hips", on: 0.15, off: 0.05, calib: true, fn: F => F.ok ? -F.hipDrop : null},
+    {id: "head", on: 0.15, off: 0.05, calib: true, fn: F => F.ok && F.noseOK ? -F.headDrop : null},
+    {id: "speed", on: 1.2, off: 0.3, calib: true, fn: F => F.ok ? -rate(F, 0.12, G => G.hipDrop) : null}
+  ], {gate: F => Math.abs(delta(F, 0.25, G => G.lat)) < 0.25});
 
   function runTrigger(tr, F){
     const vals = tr.cues.map(c => { const v = c.fn(F); return v == null || !isFinite(v) ? null : v; });
@@ -543,6 +571,7 @@ const BodyCore = (() => {
     base.torso = Math.max(1, Math.hypot(sh.x - hip.x, sh.y - hip.y));
     base.cx = hip.x; base.hipY = hip.y; base.shY = sh.y;
     base.knY = [avgI(LM.lKn).y, avgI(LM.rKn).y];
+    base.noseY = avgI(LM.nose).y;
     if (frames[0].wld){
       const avgW = i => ({x: frames.reduce((s, r) => s + r.wld[i].x, 0)/n, y: frames.reduce((s, r) => s + r.wld[i].y, 0)/n, z: frames.reduce((s, r) => s + r.wld[i].z, 0)/n});
       const up = norm(sub(mid3(avgW(LM.lSh), avgW(LM.rSh)), mid3(avgW(LM.lHip), avgW(LM.rHip))));
@@ -555,14 +584,16 @@ const BodyCore = (() => {
     return true;
   }
     /* ---------- move test ----------
-     captureStart(types) records each cue's peak while the player does a move;
-     captureStart("stand") records resting values. applyMoveTest() then sets
-     every movement-size cue to 60 percent of the way from rest to the
-     player's own peak. Shape cues (arm straightness) keep fixed values. */
-  let cap = null;
+     captureStart(types, round) records each cue's peak while the player does a move,
+     separately for each round of the warm-up; captureStart("stand") records resting
+     values. applyMoveTest() then sets every movement-size cue to 60 percent of the
+     way from rest to the player's own peak, using the weakest round that still
+     showed the move, so the trigger fires on an honest tired rep, not just the best one.
+     Shape cues (arm straightness) keep fixed values. */
+  let cap = null, capRound = 0;
   const peaks = {}, rest = {}, restN = {};
   const cueKey = (tr, c) => `${tr.type}${tr.side || ""}.${c.id}`;
-  function captureStart(types){ cap = types; }
+  function captureStart(types, round = 0){ cap = types; capRound = round; }
   function captureStop(){ cap = null; }
   function capture(tr, vals){
     if (!cap) return;
@@ -570,20 +601,32 @@ const BodyCore = (() => {
       const v = vals[i]; if (v == null || !c.calib) return;
       const k = cueKey(tr, c);
       if (cap === "stand"){ rest[k] = (rest[k] || 0) + v; restN[k] = (restN[k] || 0) + 1; }
-      else if (cap.includes(tr.type)) peaks[k] = Math.max(peaks[k] ?? -Infinity, v);
+      else if (cap.includes(tr.type)){ const r = peaks[k] ||= {}; r[capRound] = Math.max(r[capRound] ?? -Infinity, v); }
     });
+  }
+  // which moves the warm-up has seen so far (a move counts when any of its cues reached 70 percent of its default)
+  function movesSeen(){
+    const seen = {};
+    for (const tr of TRIGGERS) for (const c of tr.cues){
+      if (!c.calib || !peaks[cueKey(tr, c)]) continue;
+      const k = cueKey(tr, c), r0 = restN[k] ? Math.max(0, rest[k]/restN[k]) : 0;
+      if (Object.values(peaks[k]).some(pk => pk >= r0 + 0.7*(c.def.on - r0))) seen[tr.type] = true;
+    }
+    return seen;
   }
   function applyMoveTest(){
     const seen = {};
     for (const tr of TRIGGERS) for (const c of tr.cues){
       if (!c.calib) continue;
-      const k = cueKey(tr, c), pk = peaks[k], r0 = restN[k] ? Math.max(0, rest[k]/restN[k]) : 0;
-      if (pk == null || pk < r0 + 0.7*(c.def.on - r0)){ c.on = c.def.on; c.off = c.def.off; continue; }   // move not seen: keep defaults
+      const k = cueKey(tr, c), r0 = restN[k] ? Math.max(0, rest[k]/restN[k]) : 0;
+      const good = Object.values(peaks[k] || {}).filter(pk => pk >= r0 + 0.7*(c.def.on - r0));
+      if (!good.length){ c.on = c.def.on; c.off = c.def.off; continue; }   // move not seen: keep defaults
       seen[tr.type] = true;
+      const pk = Math.min(...good);
       const on = clamp(r0 + 0.6*(pk - r0), c.def.on*0.5, c.def.on*1.6);
       c.on = on; c.off = Math.min(r0 + 0.3*(pk - r0), r0 + 0.5*(on - r0));
     }
-    if (peaks["level.drop"] != null && seen.level) squatRef = clamp(peaks["level.drop"], 0.15, 0.8);
+    if (peaks["level.drop"] && seen.level) squatRef = clamp(Math.max(...Object.values(peaks["level.drop"])), 0.15, 0.8);
     for (const k in peaks) delete peaks[k];
     for (const k in rest){ delete rest[k]; delete restN[k]; }
     return seen;
@@ -638,12 +681,12 @@ const BodyCore = (() => {
     get latency(){ return latency; },
     setLatency(v){ latency = clamp(v, 0, 0.6); },
         MODES, detectDevice, pickMode, openCamera, partnerMode,
-    framing, captureStart, captureStop, applyMoveTest, resetThresholds,
+    framing, captureStart, captureStop, applyMoveTest, movesSeen, resetThresholds,
     attach(videoEl){ video = videoEl; },
 
   };
 })();
-/* ===================== body core v0.1  (end) ===================== */
+/* ===================== body core v0.2  (end) ===================== */
 </script>
 <script>
 (() => {
