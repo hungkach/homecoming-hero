@@ -21,13 +21,14 @@ global.performance = { now: () => ms };
 global.requestAnimationFrame = cb => { rafCb = cb; };
 global.CanvasRenderingContext2D = { prototype: { roundRect(){} } };
 
+globalThis.__hhMinutes = +process.env.MINUTES || 6;   // game length in minutes (the real default is 20)
 const vm = require("vm"); for (const src of srcs) vm.runInThisContext(src);
 const HH = window.__hh;
 
 (async () => {
   await els.touchBtn._l.click();
   let errors = 0, nextStep = 0, plays = [], lastPhase = "";
-  for (let i = 0; i < 60*60*30 && HH.game.phase !== "over"; i++){
+  for (let i = 0; i < 60*60*45 && HH.game.phase !== "over"; i++){
     ms += 1000/60; const t = ms/1000;
     const g = HH.game;
     if (g.phase === "live" && g.playType === "pass"){

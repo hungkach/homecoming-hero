@@ -122,6 +122,9 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <dt>Stiff arm</dt><dd>Raise one arm out to the side the tackler is on.</dd><span class="tap">swipe up</span>
     </dl>
     <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
+    <label class="pick" for="workout">Workout length
+      <select id="workout"><option value="15">15 minutes</option><option value="20" selected>20 minutes</option><option value="25">25 minutes</option><option value="30">30 minutes</option></select>
+    </label>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
     <label class="pick" for="booth">Announcer
       <select id="booth"><option value="dark">After dark: dark and blue</option><option value="family">Family: clean jokes</option><option value="off">Off</option></select>
@@ -698,7 +701,7 @@ const BodyCore = (() => {
 
 /* ============ constants ============ */
 const FH = 26.65;                 // half field width in yards
-const QUARTER_SECONDS = 300;      // 5 minute quarters
+const QUARTER_SECONDS = 300;      // 5 minute quarters on the scoreboard; real time is the workout length split four ways
 const IDX = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lKn:25,rKn:26};
 const COL = {home:"#1f5fbf", homeDark:"#163f80", away:"#b3262e", awayDark:"#7a161c", gold:"#ffcf3f", turfA:"#2f7d3a", turfB:"#2a7034",
   apron:"#21502a", line:"rgba(255,255,255,.9)", skin:"#c68a5e", skinDark:"#8f5b39", ball:"#7a3f1d", pants:"#e9e4d8", ink:"#f7f3ea"};
@@ -1311,7 +1314,8 @@ const handPunch = {L: -9, R: -9};
 /* ============ game state ============ */
 let game = null;
 function newGame(){
-  game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, home:0, away:0, down:1, toGo:10, ballOn:75,
+  const minutes = window.__hhMinutes || +$("workout").value || 20;   // __hhMinutes: test switch
+  game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, dur: minutes*60, realT: 0, home:0, away:0, down:1, toGo:10, ballOn:75,
     play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
     p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
     stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0},
@@ -1911,7 +1915,6 @@ function endPass(result, why){
 function afterPlay(){
   const g = game, r = g.result;
   g.firstPlay = false; hint(null);
-  g.clock -= r.kind === "td" ? rand(8, 15) : r.kind === "incomplete" ? rand(5, 9) : rand(32, 48);
   let driveOver = false;
   if (r.kind === "td"){ driveOver = true; }
   else {
@@ -1923,11 +1926,14 @@ function afterPlay(){
   if (driveOver){ startOpponent(r.kind === "td"); return; }
   if (!clockCheck()) startHuddle(false);
 }
+// the game clock follows the workout: the four quarters split your chosen length, so the final whistle
+// lands on it (give or take the last play). Breaks count; pauses don't.
+function syncClock(){ const g = game, ge = Math.min(4*QUARTER_SECONDS, g.realT/g.dur*4*QUARTER_SECONDS); g.clock = clamp(QUARTER_SECONDS*g.q - ge, 0, QUARTER_SECONDS); }
 function clockCheck(){
   const g = game;
   if (g.clock > 0) return false;
   if (g.q >= 4){ endGame(); return true; }
-  g.q++; g.clock = QUARTER_SECONDS;
+  g.q++; syncClock();
   if (g.q === 3){ banner("Halftime", `Mustangs ${g.home}, Raiders ${g.away}. Get some water.`, 3); say("Halftime"); announce("half", {force: true, delay: 1}); g.ballOn = 75; g.down = 1; g.toGo = 10;
     g.phase = "break"; g.t = mode === "body" ? 20 : 5; updateBoard(); return true; }
   banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); g.phase = "break"; g.t = 3; updateBoard(); return true;
@@ -1945,7 +1951,7 @@ function startOpponent(afterTD, lead){
   else if (r < (0.5 + d*0.1)*field){ pts = 3; text = "Raiders kick a field goal."; }
   else if (r < 0.7){ text = "Mustangs defense forces a punt."; }
   else { text = "Interception! The Mustangs defense takes it back."; }
-  g.away += pts; g.clock -= rand(80, 160);
+  g.away += pts;
   g.phase = "opp"; g.t = lead ? 7.2 : 3.4; g.oppText = text; g.oppShowIn = afterTD ? 2.2 : lead ? 5 : 1.2; g.oppPts = pts;
   g.ballOn = text.startsWith("Interception") ? Math.round(rand(40, 60)) : 75; g.down = 1; g.toGo = 10;
 }
@@ -1954,7 +1960,7 @@ function endGame(){
   $("board").hidden = true; $("banner").hidden = true; $("playCard").hidden = true; $("pauseBtn").hidden = true; hint(null);
   const win = g.home > g.away, tie = g.home === g.away;
   $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
-  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro + g.stats.targets} plays.`;
+  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. ${Math.round(g.realT/60)} minute workout: ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro + g.stats.targets} plays.`;
   const s = g.stats, ypc = s.carries ? (s.yards/s.carries).toFixed(1) : "0.0";
   const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs],
     ["Blitz pickups", `${s.pickups}/${s.passPro}`],["Clean pockets", s.clean],["Sacks allowed", s.sacks],
@@ -1972,6 +1978,7 @@ let paused = false;
 function update(dt){
   const g = game; if (!g || paused) return;
   const t = now();
+  if (g.phase !== "over"){ g.realT += dt; syncClock(); }
   if (bannerT > 0){ bannerT -= dt; if (bannerT <= 0) $("banner").hidden = true; }
   g.flash = Math.max(0, g.flash - dt); g.shake = Math.max(0, g.shake - dt);
   if (mode === "body" && g.phase !== "over"){
@@ -2936,7 +2943,8 @@ $("setupBack").addEventListener("click", () => { $("setupScreen").hidden = true;
 $("screenDevice").addEventListener("click", () => { screenChoice = "device"; renderSetup(); });
 $("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup(); });
 $("modeSel").addEventListener("change", renderSetup);
-try{ const b = localStorage.getItem("hhBooth"); if (b) $("booth").value = b; }catch(e){}
+try{ const b = localStorage.getItem("hhBooth"); if (b) $("booth").value = b; const w = localStorage.getItem("hhWorkout"); if (w) $("workout").value = w; }catch(e){}
+$("workout").addEventListener("change", e => { try{ localStorage.setItem("hhWorkout", e.target.value); }catch(err){} });
 $("booth").addEventListener("change", e => { try{ localStorage.setItem("hhBooth", e.target.value); }catch(err){} });
 $("voiceSel").addEventListener("change", e => {
   voice = voices.find(v => v.voiceURI === e.target.value) || voice;

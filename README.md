@@ -26,6 +26,10 @@ Pass pro read: before the snap, the real blitzer creeps closer and sinks lower. 
 
 Routes: the route is drawn on the grass before the snap, with an orange cone at the break. A linebacker covers you. Break on time and he bites, which opens space for the catch. The ball's whoosh rises to its peak right as it arrives, so you can time your hands by ear. After the catch it's a normal run.
 
+## Workout length
+
+Pick 15, 20, 25, or 30 minutes on the start screen. The scoreboard still shows four 5 minute quarters, but the game clock follows your real workout time, so the final whistle lands on the length you picked (give or take the last play). Breaks count; pauses don't.
+
 ## Camera setups
 
 Pick "Play with body." Phones get one question: watch on this phone, or on your TV. Everything else is picked automatically, and a manual override lets you test any setup.
