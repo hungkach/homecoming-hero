@@ -643,6 +643,11 @@ const PLAYS = [
   {name:"Toss sweep right", hole: 7, say:"Toss sweep right. Get to the edge."},
   {name:"Toss sweep left", hole:-7, say:"Toss sweep left. Get to the edge."}
 ];
+// 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, punch on contact, anchor.
+const PASS_PLAYS = [
+  {name: "Max protect", hole: 99, pass: true, say: "Pass protection. Find the blitzer."},
+  {name: "Scat protection", hole: 99, pass: true, say: "Pass pro. Pick up the blitz."}
+];
 
 if (!CanvasRenderingContext2D.prototype.roundRect){
   CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r){ r = Math.max(0, Math.min(r, w/2, h/2)); this.moveTo(x+r, y); this.arcTo(x+w, y, x+w, y+h, r); this.arcTo(x+w, y+h, x, y+h, r); this.arcTo(x, y+h, x, y, r); this.arcTo(x, y, x+w, y, r); this.closePath(); };
@@ -709,6 +714,16 @@ const sfx = {
   pads(){ noise(0.12, 2200, 0.35, "bandpass"); tone(220, 90, 0.12, 0.3, "square"); },
   whoosh(){ noise(0.25, 1600, 0.25, "highpass"); },
   hut(){ tone(160, 120, 0.12, 0.25, "sawtooth"); },
+  // rising zip, panned to the side the rusher is spinning toward
+  counter(side){
+    if (!AC) return;
+    const o = AC.createOscillator(), g = AC.createGain(), t0 = AC.currentTime;
+    o.type = "sawtooth"; o.frequency.setValueAtTime(300, t0); o.frequency.exponentialRampToValueAtTime(900, t0 + 0.25);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+    o.connect(g);
+    if (AC.createStereoPanner){ const pn = AC.createStereoPanner(); pn.pan.value = side; g.connect(pn); pn.connect(master); } else g.connect(master);
+    o.start(t0); o.stop(t0 + 0.32);
+  },
   cheer(){ crowd(0.45, 2.5); tone(523, 523, 0.25, 0.12, "square"); tone(659, 659, 0.25, 0.12, "square", 0.18); tone(784, 784, 0.45, 0.12, "square", 0.36); },
   groan(){ crowd(0.18, 1); tone(220, 110, 0.6, 0.1, "sawtooth"); }
 };
@@ -721,22 +736,37 @@ function say(text, force){
 
 /* ============ input: touch / keyboard ============ */
 let mode = "touch";   // "touch" or "body"
-const input = {steps:[], juke:0, shoulder:false, stiff:false, jukeT:null, shoulderT:null, stiffT:null};
+const input = {steps:[], juke:0, shoulder:false, stiff:false, punch:false, keyStance:false, jukeT:null, shoulderT:null, stiffT:null, punchT:null};
 function addStep(t){ input.steps.push(t); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
-let tStart = null;
-cv.addEventListener("pointerdown", e => { tStart = {x:e.clientX, y:e.clientY, t:now()}; });
-cv.addEventListener("pointerup", e => {
-  if (!tStart) return;
-  const dx = e.clientX - tStart.x, dy = e.clientY - tStart.y, dist = Math.hypot(dx, dy);
-  tStart = null;
+// pointers are tracked one by one so pass pro can hold a stance with one thumb and punch with the other
+const pointers = new Map();
+cv.addEventListener("pointerdown", e => { pointers.set(e.pointerId, {x: e.clientX, y: e.clientY, t: now(), moved: false}); });
+cv.addEventListener("pointermove", e => { const q = pointers.get(e.pointerId); if (q && Math.hypot(e.clientX - q.x, e.clientY - q.y) >= 28) q.moved = true; });
+function endPointer(e){
+  const q = pointers.get(e.pointerId); if (!q) return;
+  pointers.delete(e.pointerId);
+  if (e.type === "pointercancel") return;
+  const dx = e.clientX - q.x, dy = e.clientY - q.y, dist = Math.hypot(dx, dy), held = now() - q.t;
   if (mode === "body"){ if (game && game.phase !== "over") pause(); return; }
+  if (game && game.playType === "pass"){
+    if (dist < 28){ if (held < 0.3){ input.punch = true; input.punchT = now(); } return; }   // a long hold was the stance
+    if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
+    return;
+  }
   if (dist < 28){ addStep(now()); return; }
   if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
   else if (dy > 0){ input.shoulder = true; input.shoulderT = now(); }
   else { input.stiff = true; input.stiffT = now(); }
-});
+}
+cv.addEventListener("pointerup", endPointer);
+cv.addEventListener("pointercancel", endPointer);
+function touchStanceHeld(){ const t = now(); for (const q of pointers.values()) if (!q.moved && t - q.t > 0.15) return true; return false; }
 window.addEventListener("keydown", e => {
   if (!game || mode !== "touch") return;
+  if (game.playType === "pass"){
+    if (e.code === "Space"){ input.punch = true; input.punchT = now(); e.preventDefault(); return; }
+    if (e.code === "ArrowDown"){ input.keyStance = true; e.preventDefault(); return; }
+  }
   if (e.code === "Space" || e.code === "KeyF" || e.code === "KeyJ"){ addStep(now()); e.preventDefault(); }
   else if (e.code === "ArrowLeft"){ input.juke = -1; input.jukeT = now(); }
   else if (e.code === "ArrowRight"){ input.juke = 1; input.jukeT = now(); }
@@ -744,6 +774,7 @@ window.addEventListener("keydown", e => {
   else if (e.code === "ArrowUp"){ input.stiff = true; input.stiffT = now(); }
   else if (e.code === "Escape") pause();
 });
+window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keyStance = false; });
 
 /* ============ startup sequence: framing check, move test, latency check ============ */
 const MOVE_TEST = [
@@ -867,9 +898,15 @@ function pumpBody(){
     if (e.type === "step") addStep(e.t);
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }
     else if (e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }
-    else if (e.type === "punch"){ input.stiff = true; input.stiffT = e.tEff; }
+    else if (e.type === "punch"){
+      if (game.playType === "pass"){   // pass pro punch is both hands together
+        handPunch[e.side] = e.tEff;
+        if (Math.abs(handPunch.L - handPunch.R) < 0.3){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
+      } else { input.stiff = true; input.stiffT = e.tEff; }
+    }
   }
 }
+const handPunch = {L: -9, R: -9};
 
 /* ============ game state ============ */
 let game = null;
@@ -877,7 +914,7 @@ function newGame(){
   game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, home:0, away:0, down:1, toGo:10, ballOn:75,
     play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
     p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
-    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0},
+    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0},
     flash:0, shake:0};
   startHuddle(true);
 }
@@ -897,17 +934,25 @@ function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; }
 
 function startHuddle(newDrive){
   const g = game;
-  g.phase = "huddle"; g.t = mode === "body" ? 11 : 6;
-  g.play = PLAYS[Math.floor(Math.random()*PLAYS.length)];
-  if (g.ballOn <= 3 && Math.abs(g.play.hole) > 5) g.play = PLAYS[2];
+  g.phase = "huddle"; g.t = g.huddleLen = mode === "body" ? 11 : 6;
+  g.playType = (g.down === 3 && g.toGo >= 5 && Math.random() < 0.67) || window.__hhForcePass ? "pass" : "run";   // __hhForcePass: test switch
+  g.play = g.playType === "pass" ? PASS_PLAYS[Math.floor(Math.random()*PASS_PLAYS.length)] : PLAYS[Math.floor(Math.random()*PLAYS.length)];
+  if (g.playType === "run" && g.ballOn <= 3 && Math.abs(g.play.hole) > 5) g.play = PLAYS[2];
+  g.pp = null; g.ball = null;
   g.p = {x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0};
-  input.steps = []; input.juke = 0; input.shoulder = input.stiff = false;
-  g.p.x = Math.abs(g.play.hole) > 3 ? clamp(g.play.hole*0.45, -3.2, 3.2) : 0;   // the handoff angle points you at the hole
+  input.steps = []; input.juke = 0; input.shoulder = input.stiff = input.punch = false;
+  g.p.x = Math.abs(g.play.hole) > 3 && !g.play.pass ? clamp(g.play.hole*0.45, -3.2, 3.2) : 0;   // the handoff angle points you at the hole
   spawnDefense();
+  if (g.playType === "pass") setupPassPro();
   updateBoard();
   banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
   say(g.play.say);
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
+  if (g.playType === "pass" && !g.seenPass){
+    g.seenPass = true;
+    hint(mode === "touch" ? "Swipe toward the blitzer · hold a thumb down to sit in your stance · tap to punch as he arrives"
+                          : "The blitzer creeps closer and lower. Shuffle to him, sit in a quarter squat, punch with both hands.");
+  }
 }
 function spawnDefense(){
   const g = game, d = (g.q - 1)/3;
@@ -1038,11 +1083,115 @@ function updateLive(dt, t){
   if (p.stall > 3.5){ sfx.hit(); endPlay("tackle", "Hit in the backfield. Keep those knees moving."); }
 }
 
+/* ============ pass protection ============ */
+function setupPassPro(){
+  const g = game, side = Math.random() < 0.5 ? -1 : 1;
+  const mk = (type, x) => ({type, x, z: 4.4, speed: 0, lat: 0, react: 0, delay: 0, state: "creep", vx: 0, vz: 0, num: Math.floor(rand(40, 59)), anim: 0, downT: 0, crouch: 0.15});
+  g.pp = {side, lane: side*1.2, creep: 0, liveT: 0, punchT: -9, contactAt: null, stanceTime: 0, stanceNow: false,
+          counterAt: null, counterSide: 0, counterCued: false, mirrored: false, punchGood: false, eta: 9,
+          rusher: mk("BLITZ", side*2.6), fake: mk("FAKE", -side*2.6)};
+  g.p.x = 0; g.p.z = -4;
+  g.defenders = g.defenders.filter(d => d.type !== "DL" && !(d.type === "LB" && Math.abs(d.x) < 2)).concat([g.pp.rusher, g.pp.fake]);
+}
+// before the snap: the real blitzer creeps closer and sinks lower; the other one bounces in place
+function passPreSnap(dt){
+  const g = game, pp = g.pp; if (!pp) return;
+  pp.creep = Math.min(1, pp.creep + dt/(g.huddleLen + 1.6));
+  const r = pp.rusher, f = pp.fake, k = pp.creep, t = now();
+  r.z = lerp(4.4, 2.4, k); r.crouch = lerp(0.15, 0.5, k);
+  f.z = 3.9 + Math.sin(t*3.1)*0.25; f.crouch = 0.12 + 0.08*Math.sin(t*2.3);
+}
+function passStance(){
+  return mode === "body" ? (BodyCore.state.stance >= 0.25 && BodyCore.state.stance <= 1.3) : (touchStanceHeld() || input.keyStance);
+}
+function updatePass(dt, t){
+  const g = game, p = g.p, pp = g.pp, r = pp.rusher, f = pp.fake, L = LAT(), d = (g.q - 1)/3;
+  g.stats.work += dt; pp.liveT += dt;
+  pp.stanceNow = passStance();
+  p.dip += ((pp.stanceNow ? 0.6 : 0) - p.dip)*Math.min(1, dt*10);
+  // shuffle and punch
+  if (input.juke && t - p.lastJuke > 0.3){
+    const engaged = r.state === "engaged";
+    p.jukeFrom = p.x; p.jukeTo = clamp(p.x + input.juke*(engaged ? 0.6 : 1.2), -2.4, 2.4); p.jukeT = 0; p.lastJuke = input.jukeT ?? t; sfx.step();
+    if (pp.counterAt != null && !pp.mirrored && input.juke === pp.counterSide && p.lastJuke >= pp.counterAt - 0.1 && p.lastJuke <= pp.counterAt + 0.8) pp.mirrored = true;
+  }
+  if (input.punch){ pp.punchT = input.punchT ?? t; p.stiffAnim = 1; }
+  input.juke = 0; input.punch = false; input.jukeT = input.punchT = null;
+  if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1 - u)*(1 - u)); }
+  p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
+  // the fake takes a hesitation step, then drops into coverage with everyone else
+  f.crouch = 0; f.anim += dt*8;
+  if (pp.liveT < 0.35) f.z -= 3*dt; else f.z += 5*dt;
+  for (const o of g.defenders) if (o.type !== "BLITZ" && o.type !== "FAKE" && pp.liveT < 1.6){ o.z += 3*dt; o.anim += dt*8; }
+  // the blitzer runs the A gap, then straight at the spot behind you
+  if (r.state === "creep") r.state = "rush";
+  if (r.state === "rush"){
+    const sp = 6.2 + d*0.6, gap = {x: pp.side*1.0, z: -0.6}, spot = {x: pp.lane, z: p.z + 0.9};
+    const tgt = r.z > gap.z + 0.2 ? gap : spot;
+    const dx = tgt.x - r.x, dz = tgt.z - r.z, dist = Math.hypot(dx, dz) || 1, step = Math.min(dist, sp*dt);
+    r.x += dx/dist*step; r.z += dz/dist*step; r.crouch = 0.1; r.anim += dt*10;
+    const rest = tgt === gap ? Math.hypot(spot.x - gap.x, spot.z - gap.z) : 0;
+    pp.eta = (dist - step + rest)/sp;
+    if (r.z <= p.z + 0.95){ r.state = "contact"; pp.contactAt = t; }
+  }
+  // the call waits out the camera delay, so a shuffle or punch seen late on screen still counts
+  if (r.state === "contact" && t >= pp.contactAt + L + 0.15){
+    if (Math.abs(p.x - pp.lane) >= 0.8){
+      r.state = "free"; sfx.hit(); g.shake = 0.6;
+      return endPass("sack", Math.sign(p.x) === -pp.side ? "You picked up the wrong man." : "He beat you to the spot.");
+    }
+    g.stats.pickups++;
+    pp.punchGood = pp.punchT >= pp.contactAt - 0.35 && pp.punchT <= pp.contactAt + 0.15;
+    r.state = "engaged"; sfx.pads(); g.shake = 0.4;
+    banner(pp.punchGood ? "Stonewalled!" : "Late hands", pp.punchGood ? "Now anchor." : "He got into your chest.", 1);
+    pp.counterAt = pp.contactAt + 0.7; pp.counterSide = Math.random() < 0.5 ? -1 : 1;
+  }
+  if (r.state === "engaged"){
+    const seenT = t - L;
+    if (seenT >= pp.contactAt && seenT <= pp.contactAt + 2.0 && pp.stanceNow) pp.stanceTime += dt;
+    if (t >= pp.counterAt && !pp.counterCued){ pp.counterCued = true; sfx.counter(pp.counterSide); }
+    const lean = clamp((t - pp.counterAt)/0.3, 0, 1);
+    r.z = p.z + 0.85; r.x = pp.mirrored ? p.x : pp.lane + pp.counterSide*0.5*lean;
+    if (!pp.mirrored && t >= pp.counterAt + 0.8 + L){
+      r.state = "free"; sfx.whoosh();
+      return endPass(pp.punchGood ? "hurried" : "sack", "He spun off your block.");
+    }
+    if (t >= pp.contactAt + 2.0 + L){
+      const held = pp.stanceTime;
+      let res;
+      if (pp.punchGood && held >= 1.6 && pp.mirrored) res = "clean";
+      else if (pp.punchGood || held >= 1.0) res = "hurried";
+      else res = "sack";
+      return endPass(res, res === "sack" ? "You came out of your stance." : "");
+    }
+  }
+}
+function endPass(result, why){
+  const g = game; if (g.phase !== "live") return;
+  g.phase = "dead"; g.t = 3.0; sfx.whistle();
+  g.stats.passPro++;
+  let kind = null, gain = 0;
+  if (result === "clean"){ g.stats.clean++; gain = Math.round(rand(12, 30)); }
+  else if (result === "hurried"){ if (Math.random() < 0.5) gain = Math.round(rand(3, 8)); else kind = "incomplete"; }
+  else { g.stats.sacks++; gain = -Math.min(Math.round(rand(5, 9)), 99 - g.ballOn); kind = "sack"; }
+  if (!kind) kind = gain >= g.ballOn ? "td" : "pass";
+  if (kind === "td") gain = g.ballOn;
+  g.result = {kind, gain};
+  if (kind !== "sack") g.ball = {t0: now(), dur: 1.0, x0: -1.3, z0: g.p.z + 0.4, x1: rand(-12, 12), z1: kind === "incomplete" ? rand(8, 18) : gain, caught: kind !== "incomplete"};
+  if (kind === "td"){
+    g.home += 7; g.stats.tds++; sfx.cheer(); g.flash = 1.2;
+    banner("Touchdown!", `Clean pocket. ${gain} yard strike. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
+  } else if (result === "clean"){ banner("Clean pocket!", `Completed for ${gain}.`, 2.6); say("Clean pocket!"); sfx.cheer(); }
+  else if (kind === "pass"){ banner("Hurried throw", `Dumped off for ${gain}.`, 2.4); }
+  else if (kind === "incomplete"){ banner("Hurried throw", "Incomplete.", 2.4); sfx.groan(); }
+  else { banner("Sack!", `${why} Loss of ${-gain}.`, 2.6); say("Sack."); sfx.groan(); }
+}
+
 /* ============ between plays ============ */
 function afterPlay(){
   const g = game, r = g.result;
   g.firstPlay = false; hint(null);
-  g.clock -= r.kind === "td" ? rand(8, 15) : rand(32, 48);
+  g.clock -= r.kind === "td" ? rand(8, 15) : r.kind === "incomplete" ? rand(5, 9) : rand(32, 48);
   let driveOver = false;
   if (r.kind === "td"){ driveOver = true; }
   else {
@@ -1079,9 +1228,10 @@ function endGame(){
   $("board").hidden = true; $("banner").hidden = true; $("pauseBtn").hidden = true; hint(null);
   const win = g.home > g.away, tie = g.home === g.away;
   $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
-  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries} plays.`;
+  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro} plays.`;
   const s = g.stats, ypc = s.carries ? (s.yards/s.carries).toFixed(1) : "0.0";
-  const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs]];
+  const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs],
+    ["Blitz pickups", `${s.pickups}/${s.passPro}`],["Clean pockets", s.clean],["Sacks allowed", s.sacks]];
   $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
   $("endScreen").hidden = false;
   say(win ? "Homecoming win! Mustangs take it." : "Final score.", true);
@@ -1099,16 +1249,17 @@ function update(dt){
   if (mode === "body" && g.phase !== "over"){
     if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
+  if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
   if (g.phase === "huddle"){
     g.t -= dt;
     if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
   } else if (g.phase === "cadence"){
     g.t -= dt;
-    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", "Knees up!", 0.7); }
+    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
-      input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; }
+      input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
-    updateLive(dt, t);
+    if (g.playType === "pass") updatePass(dt, t); else updateLive(dt, t);
   } else if (g.phase === "dead"){
     g.t -= dt;
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
@@ -1261,25 +1412,32 @@ function drawPlayers(c, t){
   // the scrum at the line: offensive line (backs to you) against the defensive line
   if (g.phase !== "opp"){
     const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
-    const hole = g.play.hole, slots = [-4, -2, 0, 2, 4];
+    const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
+    const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset;
     for (let i=0;i<5;i++){
       let x = slots[i];
       if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
-      items.push({z: -0.6, x, draw: () => figure(c, x, -0.6, {jersey: COL.home, trim: COL.gold, num: 50 + i*7 % 30, back: true, crouch: 0.4, anim: t*6 + i})});
+      items.push({z: olZ, x, draw: () => figure(c, x, olZ, {jersey: COL.home, trim: COL.gold, num: 50 + i*7 % 30, back: true, crouch: 0.4, anim: t*6 + i})});
     }
     for (let i=0;i<4;i++){
       let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
-      items.push({z: 0.7, x, draw: () => figure(c, x, 0.7, {jersey: COL.away, trim: "#f2e6d0", num: 90 + i, crouch: 0.4, anim: t*6 + i*2})});
+      items.push({z: dlZ, x, draw: () => figure(c, x, dlZ, {jersey: COL.away, trim: "#f2e6d0", num: 90 + i, crouch: 0.4, anim: t*6 + i*2})});
     }
   }
   for (const d of g.defenders){
     if (g.phase === "opp") break;
-    items.push({z: d.z, x: d.x, draw: () => figure(c, d.x, d.z, {jersey: COL.away, trim: "#f2e6d0", num: d.num, down: d.state === "down" || (d.state === "resolved" && g.phase === "dead"), anim: (g.phase === "live" ? d.anim : 0), crouch: g.phase === "live" ? 0 : 0.25})});
+    items.push({z: d.z, x: d.x, draw: () => figure(c, d.x, d.z, {jersey: COL.away, trim: "#f2e6d0", num: d.num, down: d.state === "down" || (d.state === "resolved" && g.phase === "dead"), anim: (g.phase === "live" ? d.anim : 0), crouch: d.crouch ?? (g.phase === "live" ? 0 : 0.25)})});
   }
   items.sort((a, b) => b.z - a.z);
   for (const it of items) if (it.z > c.z + 0.4) it.draw();
+  // pass pro: a ring that closes on the blitzer right as he arrives, so you can time the punch
+  if (g.playType === "pass" && g.phase === "live" && g.pp.rusher.state === "rush" && g.pp.eta < 0.9){
+    const r = g.pp.rusher, q = proj(c, r.x, 1.0, r.z);
+    if (q){ const u = g.pp.eta/0.9; cx.strokeStyle = `rgba(255,207,63,${0.9 - 0.5*u})`; cx.lineWidth = Math.max(3, q.s*0.12);
+      cx.beginPath(); cx.arc(q.x, q.y, q.s*(1.1 + 2.6*u), 0, 7); cx.stroke(); }
+  }
   // hole arrow before the snap
-  if (g.phase === "huddle" || g.phase === "cadence"){
+  if (g.playType !== "pass" && (g.phase === "huddle" || g.phase === "cadence")){
     const a = proj(c, g.play.hole, 0.05, 1.6), b = proj(c, g.play.hole, 0.05, 4.5);
     if (a && b){
       const pulse = 0.6 + 0.4*Math.sin(t*6);
@@ -1288,8 +1446,41 @@ function drawPlayers(c, t){
     }
   }
 }
+function drawPassSelf(c, t){
+  const g = game, p = g.p, pp = g.pp, u = Math.min(W, H), ext = p.stiffAnim;
+  // both hands up and ready, thrusting out together on the punch
+  for (const sd of [-1, 1]){
+    cx.save(); cx.translate(W/2 + sd*(W*0.2 - ext*W*0.06), H + u*0.05 - ext*H*0.2);
+    cx.rotate(sd*(0.25 - ext*0.15));
+    cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.07, -u*0.12, u*0.14, u*0.26, u*0.04); cx.fill();
+    cx.fillStyle = COL.skin; cx.beginPath(); cx.roundRect(-u*0.06, -u*0.21 - ext*u*0.05, u*0.12, u*0.11 + ext*u*0.05, u*0.03); cx.fill();
+    cx.restore();
+  }
+  // the counter: big chevrons toward the side he's spinning, until you mirror him
+  if (pp.counterAt != null && !pp.mirrored && g.phase === "live" && t >= pp.counterAt && t <= pp.counterAt + 0.8){
+    const sd = pp.counterSide, cxp = W/2 + sd*W*0.3, cy = H*0.45, sz = u*0.08, a = 0.6 + 0.4*Math.sin(t*20);
+    cx.fillStyle = `rgba(255,90,70,${a})`;
+    for (let k = 0; k < 3; k++){ const x0 = cxp + sd*k*sz*0.9;
+      cx.beginPath(); cx.moveTo(x0 - sd*sz*0.4, cy - sz); cx.lineTo(x0 + sd*sz*0.5, cy); cx.lineTo(x0 - sd*sz*0.4, cy + sz); cx.lineTo(x0 - sd*sz*0.1, cy); cx.closePath(); cx.fill(); }
+  }
+  // stance meter: green band is a quarter squat
+  if (g.phase === "live" || g.phase === "cadence"){
+    const x = W - 36, top = H*0.3, h = H*0.42, lvl = mode === "body" ? clamp(BodyCore.state.stance, 0, 1.3)/1.3 : (pp.stanceNow ? 0.55 : 0);
+    cx.fillStyle = "rgba(10,16,32,.75)"; cx.fillRect(x - 4, top - 4, 28, h + 8);
+    cx.fillStyle = "rgba(90,220,120,.35)"; cx.fillRect(x, top + h*(1 - 1.1/1.3), 20, h*(0.85/1.3));
+    cx.fillStyle = pp.stanceNow ? "rgba(90,220,120,.95)" : "rgba(255,207,63,.9)"; cx.fillRect(x, top + h*(1 - lvl), 20, h*lvl);
+  }
+}
+function drawBall(c, t){
+  const b = game.ball; if (!b) return;
+  const u = clamp((t - b.t0)/b.dur, 0, 1), z = lerp(b.z0, b.z1, u), x = lerp(b.x0, b.x1, u), y = 2 + Math.sin(u*Math.PI)*(3 + Math.abs(b.z1 - b.z0)*0.25);
+  const q = proj(c, x, y, z); if (!q) return;
+  cx.save(); cx.translate(q.x, q.y); cx.rotate(-0.5); cx.fillStyle = COL.ball;
+  cx.beginPath(); cx.ellipse(0, 0, Math.max(3, q.s*0.28), Math.max(2, q.s*0.16), 0, 0, 7); cx.fill(); cx.restore();
+}
 function drawSelf(c, t){
   const g = game; if (!g || g.phase === "opp" || g.phase === "break") return;
+  if (g.playType === "pass"){ drawPassSelf(c, t); return; }
   const p = g.p, sp = Math.min(1, p.speed/6), u = Math.min(W, H);
   const bob = Math.sin(p.bob)*u*0.03*sp;
   // carrying arm and ball, bottom right
@@ -1378,6 +1569,7 @@ function render(t){
   drawStadium(c, t);
   drawField(c);
   drawPlayers(c, t);
+  if (game && game.ball) drawBall(c, t);
   cx.restore();
   drawSelf(c, t);
   if (game && game.flash > 0){ cx.fillStyle = `rgba(255,207,63,${game.flash*0.15})`; cx.fillRect(0, 0, W, H); }
@@ -1439,7 +1631,7 @@ async function startBody(){
     $("setupScreen").hidden = true; beginSetup(true);
   }catch(e){
     let msg = "The camera didn't start. Reload and try again.";
-    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "Camera access was blocked. Allow the camera for this site in your browser settings, then reload.";
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "Camera access was blocked. Allow the camera for this site in your browser settings, then reload. Inside the Claude app, open the GitHub Pages link instead.";
     else if (e && e.name === "NotFoundError") msg = "No camera found on this device.";
     else if (e && /import|fetch|load/i.test(String(e.message))) msg = "The body tracker didn't load. Check your connection and reload.";
     status(msg, true);
