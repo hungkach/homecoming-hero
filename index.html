@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Homecoming Hero</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one full-screen canvas showing the field from the running back's eyes,
+   a TV-style scoreboard pinned to the top, and big result banners for play-by-play.
+   Single deliberate look: a lit stadium at night, so it reads the same on any host. */
+:root{
+  --night:#0d1426;
+  --ink:#f7f3ea;
+  --ink-dim:#b8bfd0;
+  --home:#1f5fbf;      /* Mustangs blue */
+  --away:#b3262e;      /* Raiders red */
+  --gold:#ffcf3f;
+  --turf:#2f7d3a;
+  --card:rgba(10,16,32,.9);
+  --line:rgba(255,207,63,.3);
+  --slab:"Alfa Slab One","Rockwell","Georgia",serif;
+  --cond:"Barlow Condensed","Arial Narrow","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--night);color:var(--ink);font-family:var(--cond);overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+#field{position:fixed;inset:0;width:100%;height:100%;display:block}
+video{position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;left:0;top:0}
+
+.board{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 10px);transform:translateX(-50%);display:grid;gap:6px;justify-items:center;pointer-events:none;width:min(560px,calc(100% - 32px))}
+.score{display:grid;grid-template-columns:1fr auto 1fr;width:100%;border-radius:10px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.45)}
+.team{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px;font:700 clamp(15px,2.6vh,26px)/1 var(--cond);letter-spacing:.04em;text-transform:uppercase}
+.team b{font:400 clamp(22px,4vh,40px)/1 var(--slab);font-variant-numeric:tabular-nums}
+.team.home{background:var(--home)}
+.team.away{background:var(--away);flex-direction:row-reverse}
+.clock{background:#0a0f1d;padding:6px 12px;display:grid;place-items:center;font:600 clamp(14px,2.4vh,24px)/1.1 var(--cond);font-variant-numeric:tabular-nums;text-align:center;min-width:76px}
+.situation{background:rgba(10,15,29,.85);border:1px solid var(--line);padding:5px 14px;border-radius:8px;font:700 clamp(16px,3vh,30px)/1 var(--cond);letter-spacing:.03em}
+.situation .yl{color:var(--gold)}
+.banner{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:calc(100% - 32px);display:grid;gap:6px}
+.banner .big{font:400 clamp(34px,8vh,96px)/1 var(--slab);color:var(--gold);text-shadow:0 4px 0 #000,0 0 24px rgba(0,0,0,.6);text-wrap:balance}
+.banner .small{font:700 clamp(18px,3.4vh,36px)/1.15 var(--cond);text-shadow:0 2px 0 #000;text-wrap:balance}
+.hint{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);transform:translateX(-50%);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 14px;
+  font:600 clamp(14px,2.2vh,20px)/1.3 var(--cond);text-align:center;pointer-events:none;width:max-content;max-width:calc(100% - 32px)}
+.pauseBtn{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);width:46px;height:46px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--ink);font:700 18px/1 var(--cond);padding:0;box-shadow:none}
+
+.overlay{position:fixed;inset:0;display:grid;place-items:center;padding:16px;overflow-y:auto;background:rgba(6,10,20,.35)}
+.card{width:min(460px,100%);background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 20px;display:grid;gap:14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+h1{margin:0;font:400 clamp(40px,11vw,56px)/.95 var(--slab);color:var(--gold);text-wrap:balance;text-shadow:0 4px 0 var(--away)}
+h2{margin:0;font:400 clamp(28px,5vh,46px)/1 var(--slab);text-wrap:balance}
+p{margin:0;line-height:1.4;color:var(--ink-dim);font-size:17px}
+.moves{display:grid;grid-template-columns:auto 1fr auto;gap:6px 12px;align-items:baseline;margin:0;font-size:17px}
+.moves dt{font:400 17px/1.2 var(--slab);color:var(--gold)}
+.moves dd{margin:0;color:var(--ink);line-height:1.3}
+.moves .tap{color:var(--ink-dim);font-size:15px;text-align:right}
+.note{font-size:15px;border-top:1px solid var(--line);padding-top:12px}
+.btns{display:flex;flex-wrap:wrap;gap:10px}
+button{font:400 20px/1 var(--slab);border:0;border-radius:12px;padding:15px 18px;cursor:pointer;color:#1a1408;background:var(--gold);flex:1 1 auto;box-shadow:0 4px 0 #a5841f}
+button:active{transform:translateY(2px);box-shadow:0 2px 0 #a5841f}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);box-shadow:none;font:700 19px/1 var(--cond);letter-spacing:.03em}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+.status{font:600 15px/1.4 var(--cond);color:var(--gold);min-height:1.4em}
+.err{color:#ff8a7a}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stats div{background:rgba(255,255,255,.06);border-radius:10px;padding:10px;display:grid;gap:4px;min-width:0}
+.stats b{font:400 24px/1 var(--slab);font-variant-numeric:tabular-nums}
+.stats span{font:600 13px/1.2 var(--cond);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim)}
+.toggle{display:flex;align-items:center;gap:10px;font-size:16px;color:var(--ink)}
+.toggle input{width:20px;height:20px;accent-color:var(--gold)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="field"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+
+<div class="board" id="board" hidden>
+  <div class="score">
+    <div class="team home"><span>Mustangs</span><b id="homeScore">0</b></div>
+    <div class="clock"><span id="qtr">1st</span><span id="clock">5:00</span></div>
+    <div class="team away"><span>Raiders</span><b id="awayScore">0</b></div>
+  </div>
+  <div class="situation" id="situation">1st &amp; 10 · own <span class="yl">25</span></div>
+</div>
+<div class="banner" id="banner" hidden><div class="big" id="bannerBig"></div><div class="small" id="bannerSmall"></div></div>
+<div class="hint" id="hint" hidden></div>
+<button class="pauseBtn" id="pauseBtn" type="button" aria-label="Pause" hidden>II</button>
+
+<div class="overlay" id="startScreen">
+  <div class="card">
+    <h1>Homecoming Hero</h1>
+    <p>You're the Mustangs running back on homecoming night. Take every handoff in first person, hit the hole, and beat the Raiders over four quarters.</p>
+    <dl class="moves">
+      <dt>Sprint</dt><dd>High knees in place. Faster knees, faster run.</dd><span class="tap">tap fast</span>
+      <dt>Juke</dt><dd>Hop left or right as a tackler closes in.</dd><span class="tap">swipe sideways</span>
+      <dt>Truck</dt><dd>Squat to lower your shoulder right before contact.</dd><span class="tap">swipe down</span>
+      <dt>Stiff arm</dt><dd>Punch one arm straight out at a tackler.</dd><span class="tap">swipe up</span>
+    </dl>
+    <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
+    <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
+    <div class="status" id="status"></div>
+    <div class="btns">
+      <button id="touchBtn" type="button">Play with touch</button>
+      <button id="bodyBtn" class="ghost" type="button">Play with body</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="calibScreen" hidden style="place-items:start center">
+  <div class="card" style="margin-top:12vh">
+    <h2 id="calibTitle">Get in frame</h2>
+    <p id="calibMsg" style="font-size:clamp(17px,2.8vh,28px)">Step back until your head and knees are both visible. About 4 feet is enough.</p>
+  </div>
+</div>
+
+<div class="overlay" id="pauseScreen" hidden>
+  <div class="card">
+    <h2>Timeout</h2>
+    <div class="btns">
+      <button id="resumeBtn" type="button">Resume</button>
+      <button id="recenterBtn" class="ghost" type="button">Recenter</button>
+      <button id="quitBtn" class="ghost" type="button">End game</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="endScreen" hidden>
+  <div class="card">
+    <h2 id="endTitle">Final</h2>
+    <p id="endSub"></p>
+    <div class="stats" id="stats"></div>
+    <div class="btns"><button id="againBtn" type="button">Play again</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ============ constants ============ */
+const FH = 26.65;                 // half field width in yards
+const QUARTER_SECONDS = 300;      // 5 minute quarters
+const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const IDX = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lKn:25,rKn:26};
+const COL = {home:"#1f5fbf", homeDark:"#163f80", away:"#b3262e", awayDark:"#7a161c", gold:"#ffcf3f", turfA:"#2f7d3a", turfB:"#2a7034",
+  apron:"#21502a", line:"rgba(255,255,255,.9)", skin:"#c68a5e", skinDark:"#8f5b39", ball:"#7a3f1d", pants:"#e9e4d8", ink:"#f7f3ea"};
+const PLAYS = [
+  {name:"Inside zone right", hole: 2.2, say:"Inside zone right. Hole is right."},
+  {name:"Inside zone left", hole:-2.2, say:"Inside zone left. Hole is left."},
+  {name:"Dive", hole: 0, say:"Dive. Hit it straight up the middle."},
+  {name:"Power right", hole: 3.6, say:"Power right. Follow your guard."},
+  {name:"Power left", hole:-3.6, say:"Power left. Follow your guard."},
+  {name:"Toss sweep right", hole: 7, say:"Toss sweep right. Get to the edge."},
+  {name:"Toss sweep left", hole:-7, say:"Toss sweep left. Get to the edge."}
+];
+
+if (!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r){ r = Math.max(0, Math.min(r, w/2, h/2)); this.moveTo(x+r, y); this.arcTo(x+w, y, x+w, y+h, r); this.arcTo(x+w, y+h, x, y+h, r); this.arcTo(x, y+h, x, y, r); this.arcTo(x, y, x+w, y, r); this.closePath(); };
+}
+
+/* ============ dom ============ */
+const $ = id => document.getElementById(id);
+const cv = $("field"), cx = cv.getContext("2d"), video = $("cam");
+let W = 0, H = 0, DPR = 1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  makeCrowd();
+}
+window.addEventListener("resize", resize);
+
+/* ============ helpers ============ */
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const rand = (a,b) => a + Math.random()*(b-a);
+const lerp = (a,b,t) => a + (b-a)*t;
+const ord = n => ["1st","2nd","3rd","4th"][n-1] || `${n}th`;
+const fmtClock = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+const now = () => performance.now()/1000;
+
+/* ============ audio ============ */
+let AC = null, master = null, noiseBuf = null, crowdGain = null;
+function initAudio(){
+  try{
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.8; master.connect(AC.destination);
+    noiseBuf = AC.createBuffer(1, AC.sampleRate*2, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+    const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const bp = AC.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 0.6;
+    crowdGain = AC.createGain(); crowdGain.gain.value = 0.04;
+    src.connect(bp); bp.connect(crowdGain); crowdGain.connect(master); src.start();
+  }catch(e){ AC = null; }
+}
+function crowd(level, secs){ if (!AC) return; const t = AC.currentTime; crowdGain.gain.cancelScheduledValues(t); crowdGain.gain.setTargetAtTime(level, t, 0.15); if (secs) crowdGain.gain.setTargetAtTime(0.04, t + secs, 0.8); }
+function noise(dur, freq, gain, type="lowpass"){
+  if(!AC) return;
+  const s = AC.createBufferSource(); s.buffer = noiseBuf;
+  const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+  const g = AC.createGain(); const t = AC.currentTime;
+  g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t+dur);
+}
+function tone(f0, f1, dur, gain, type="sine", delay=0){
+  if(!AC) return;
+  const o = AC.createOscillator(); o.type = type; const g = AC.createGain(); const t = AC.currentTime + delay;
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(f1,20), t+dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t+0.01); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.02);
+}
+const sfx = {
+  whistle(){ if(!AC) return; for (const f of [2950, 3150]){ const o = AC.createOscillator(); o.type = "triangle"; o.frequency.value = f;
+      const lfo = AC.createOscillator(); lfo.frequency.value = 28; const lg = AC.createGain(); lg.gain.value = 60; lfo.connect(lg); lg.connect(o.frequency);
+      const g = AC.createGain(); const t = AC.currentTime; g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.12,t+0.02); g.gain.setValueAtTime(0.12,t+0.5); g.gain.exponentialRampToValueAtTime(0.001,t+0.7);
+      o.connect(g); g.connect(master); o.start(t); lfo.start(t); o.stop(t+0.72); lfo.stop(t+0.72); } },
+  step(){ tone(90, 50, 0.07, 0.12, "sine"); },
+  hit(){ noise(0.25, 500, 0.6); tone(120, 45, 0.25, 0.5); },
+  pads(){ noise(0.12, 2200, 0.35, "bandpass"); tone(220, 90, 0.12, 0.3, "square"); },
+  whoosh(){ noise(0.25, 1600, 0.25, "highpass"); },
+  hut(){ tone(160, 120, 0.12, 0.25, "sawtooth"); },
+  cheer(){ crowd(0.45, 2.5); tone(523, 523, 0.25, 0.12, "square"); tone(659, 659, 0.25, 0.12, "square", 0.18); tone(784, 784, 0.45, 0.12, "square", 0.36); },
+  groan(){ crowd(0.18, 1); tone(220, 110, 0.6, 0.1, "sawtooth"); }
+};
+let lastSpoke = 0;
+function say(text, force){
+  if (!$("voiceOn").checked || !window.speechSynthesis) return;
+  const t = now(); if (!force && t - lastSpoke < 1.6) return; lastSpoke = t;
+  try{ speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.12; u.pitch = 0.95; speechSynthesis.speak(u); }catch(e){}
+}
+
+/* ============ input: touch / keyboard ============ */
+let mode = "touch";   // "touch" or "body"
+const input = {steps:[], juke:0, shoulder:false, stiff:false};
+function addStep(t){ input.steps.push(t); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
+let tStart = null;
+cv.addEventListener("pointerdown", e => { tStart = {x:e.clientX, y:e.clientY, t:now()}; });
+cv.addEventListener("pointerup", e => {
+  if (!tStart) return;
+  const dx = e.clientX - tStart.x, dy = e.clientY - tStart.y, dist = Math.hypot(dx, dy);
+  tStart = null;
+  if (mode === "body"){ if (game && game.phase !== "over") pause(); return; }
+  if (dist < 28){ addStep(now()); return; }
+  if (Math.abs(dx) > Math.abs(dy)) input.juke = dx > 0 ? 1 : -1;
+  else if (dy > 0) input.shoulder = true;
+  else input.stiff = true;
+});
+window.addEventListener("keydown", e => {
+  if (!game || mode !== "touch") return;
+  if (e.code === "Space" || e.code === "KeyF" || e.code === "KeyJ"){ addStep(now()); e.preventDefault(); }
+  else if (e.code === "ArrowLeft") input.juke = -1;
+  else if (e.code === "ArrowRight") input.juke = 1;
+  else if (e.code === "ArrowDown") input.shoulder = true;
+  else if (e.code === "ArrowUp") input.stiff = true;
+  else if (e.code === "Escape") pause();
+});
+
+/* ============ body tracking (knees-up framing) ============ */
+let landmarker = null, stream = null, lastVideoTime = -1, lastPoseAt = 0, poseT = 0;
+let img = null, wld = null;
+const body = {ok:false, shY:0, hipX:0, torso:0.2, thigh:0.12,
+  knees:[{i:IDX.lKn, base:null, up:false, t:0}, {i:IDX.rKn, base:null, up:false, t:0}],
+  hipHist:[], jukeCd:0, squatArmed:true, arms:{L:{prev:0, vel:0, armed:true}, R:{prev:0, vel:0, armed:true}}};
+function smooth(dst, src, a){
+  if (!dst) return src.map(p => ({x:p.x, y:p.y, z:p.z||0, v:p.visibility ?? 1}));
+  for (let i=0;i<src.length;i++){ const d = dst[i], p = src[i]; d.x += a*(p.x-d.x); d.y += a*(p.y-d.y); d.z += a*((p.z||0)-d.z); d.v = p.visibility ?? 1; }
+  return dst;
+}
+async function loadTracker(){
+  setStatus("Loading the body tracker...");
+  const vision = await import(`${MP_URL}/vision_bundle.mjs`);
+  const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+  const make = delegate => vision.PoseLandmarker.createFromOptions(fileset, {
+    baseOptions:{modelAssetPath: MODEL_URL, delegate}, runningMode:"VIDEO", numPoses:1,
+    minPoseDetectionConfidence:0.5, minPosePresenceConfidence:0.5, minTrackingConfidence:0.5});
+  try { landmarker = await make("GPU"); } catch(e){ landmarker = await make("CPU"); }
+}
+async function startCamera(){
+  setStatus("Starting the camera...");
+  // ask for the full 4:3 sensor so nothing gets cropped off the sides
+  stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:960}, height:{ideal:720}, aspectRatio:{ideal:4/3}}});
+  const track = stream.getVideoTracks()[0];
+  try{ const caps = track.getCapabilities ? track.getCapabilities() : {}; if (caps.zoom && caps.zoom.min < 1) await track.applyConstraints({advanced:[{zoom: caps.zoom.min}]}); }catch(e){}
+  video.srcObject = stream; await video.play();
+}
+function detect(){
+  if (mode !== "body" || !landmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  let res; try{ res = landmarker.detectForVideo(video, performance.now()); }catch(e){ return; }
+  if (!res || !res.landmarks || !res.landmarks[0]) return;
+  const t = now(), dt = poseT ? clamp(t - poseT, 0.001, 0.25) : 0; poseT = t; lastPoseAt = t;
+  img = smooth(img, res.landmarks[0], 0.6);
+  if (res.worldLandmarks && res.worldLandmarks[0]) wld = smooth(wld, res.worldLandmarks[0], 0.5);
+  if (body.ok) readBody(t, dt);
+}
+const midY = (a,b) => (img[a].y + img[b].y)/2;
+const midX = (a,b) => (img[a].x + img[b].x)/2;
+function bodyVisible(){
+  if (!img || now() - lastPoseAt > 0.5) return false;
+  return [IDX.nose, IDX.lSh, IDX.rSh, IDX.lHip, IDX.rHip, IDX.lKn, IDX.rKn].every(i => img[i].v > 0.5);
+}
+let calibHold = 0, calibS = [];
+function updateCalib(dt){
+  if (!bodyVisible()){ calibHold = 0; calibS = [];
+    $("calibTitle").textContent = "Get in frame";
+    $("calibMsg").textContent = img ? "Almost. Step back until your knees are in the picture too." : "Stand facing the phone, about 4 feet back.";
+    return false; }
+  calibHold += dt;
+  calibS.push({shY: midY(IDX.lSh, IDX.rSh), hipY: midY(IDX.lHip, IDX.rHip), hipX: midX(IDX.lHip, IDX.rHip), knY: midY(IDX.lKn, IDX.rKn)});
+  if (calibS.length > 40) calibS.shift();
+  const left = Math.ceil(2.5 - calibHold);
+  $("calibTitle").textContent = left > 0 ? `Hold still... ${left}` : "Ready!";
+  $("calibMsg").textContent = "Stand tall in your normal stance.";
+  if (calibHold < 2.5) return false;
+  const n = calibS.length, avg = k => calibS.reduce((s,o) => s + o[k], 0)/n;
+  body.shY = avg("shY"); body.hipX = avg("hipX");
+  body.torso = Math.max(0.05, avg("hipY") - body.shY); body.thigh = Math.max(0.04, avg("knY") - avg("hipY"));
+  for (const k of body.knees){ k.base = null; k.up = false; }
+  body.hipHist = []; body.ok = true; return true;
+}
+function readBody(t, dt){
+  // high knees: each knee rising toward hip height and coming back down is one step
+  for (const k of body.knees){
+    const y = img[k.i].y; if (img[k.i].v < 0.4) continue;
+    if (k.base === null) k.base = y;
+    const lift = (k.base - y)/body.thigh;
+    if (!k.up){ k.base += (y - k.base)*Math.min(1, (y > k.base ? 4 : 0.3)*dt); if (lift > 0.3){ k.up = true; k.t = 0; } }
+    else { k.t += dt; if (lift < 0.12){ k.up = false; if (k.t < 1.2) addStep(t); } if (k.t > 2) k.up = false; }
+  }
+  // juke: a quick hop away from center
+  const hx = midX(IDX.lHip, IDX.rHip);
+  body.hipHist.push({t, x:hx}); while (body.hipHist.length && t - body.hipHist[0].t > 0.3) body.hipHist.shift();
+  body.jukeCd = Math.max(0, body.jukeCd - dt);
+  if (body.hipHist.length > 2 && body.jukeCd <= 0){
+    const disp = (hx - body.hipHist[0].x)/body.torso;
+    const offNow = Math.abs(hx - body.hipX), offThen = Math.abs(body.hipHist[0].x - body.hipX);
+    if (Math.abs(disp) > 0.45 && offNow > offThen){ input.juke = disp < 0 ? 1 : -1; body.jukeCd = 0.6; } // image left is the player's right
+  }
+  // squat to lower the shoulder
+  const drop = (midY(IDX.lSh, IDX.rSh) - body.shY)/body.torso;
+  if (body.squatArmed && drop > 0.22){ input.shoulder = true; body.squatArmed = false; }
+  if (drop < 0.1) body.squatArmed = true;
+  if (drop < 0.05) body.shY += (midY(IDX.lSh, IDX.rSh) - body.shY)*Math.min(1, 0.2*dt);
+  // stiff arm: an arm snapping straight
+  if (wld){
+    for (const [s, sh, el, wr] of [["L",IDX.lSh,IDX.lEl,IDX.lWr],["R",IDX.rSh,IDX.rEl,IDX.rWr]]){
+      const a = body.arms[s], A = wld[sh], E = wld[el], Wr = wld[wr];
+      const d3 = (p,q) => Math.hypot(p.x-q.x, p.y-q.y, p.z-q.z);
+      const ext = d3(A, Wr)/Math.max(0.05, d3(A,E) + d3(E,Wr));
+      if (dt > 0) a.vel = lerp(a.vel, (ext - a.prev)/dt, 0.5);
+      a.prev = ext;
+      if (ext < 0.72) a.armed = true;
+      if (a.armed && ext > 0.86 && a.vel > 1.3){ input.stiff = true; a.armed = false; }
+    }
+  }
+}
+
+/* ============ game state ============ */
+let game = null;
+function newGame(){
+  game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, home:0, away:0, down:1, toGo:10, ballOn:75,
+    play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
+    p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
+    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0},
+    flash:0, shake:0};
+  startHuddle(true);
+}
+function situationText(){
+  const g = game, yl = g.ballOn > 50 ? `own ${100 - g.ballOn}` : g.ballOn === 50 ? "midfield" : `Raiders ${g.ballOn}`;
+  const dist = g.ballOn <= g.toGo ? "goal" : g.toGo;
+  return `${ord(g.down)} &amp; ${dist} · ${yl.replace(/(\d+)$/, '<span class="yl">$1</span>')}`;
+}
+function updateBoard(){
+  $("homeScore").textContent = game.home; $("awayScore").textContent = game.away;
+  $("qtr").textContent = game.q <= 4 ? ord(game.q) : "Final"; $("clock").textContent = fmtClock(game.clock);
+  $("situation").innerHTML = situationText();
+}
+let bannerT = 0;
+function banner(big, small, secs){ $("bannerBig").textContent = big; $("bannerSmall").textContent = small || ""; $("banner").hidden = false; bannerT = secs || 2; }
+function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; } h.textContent = text; h.hidden = false; }
+
+function startHuddle(newDrive){
+  const g = game;
+  g.phase = "huddle"; g.t = mode === "body" ? 11 : 6;
+  g.play = PLAYS[Math.floor(Math.random()*PLAYS.length)];
+  if (g.ballOn <= 3 && Math.abs(g.play.hole) > 5) g.play = PLAYS[2];
+  g.p = {x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0};
+  input.steps = []; input.juke = 0; input.shoulder = input.stiff = false;
+  g.p.x = Math.abs(g.play.hole) > 3 ? clamp(g.play.hole*0.45, -3.2, 3.2) : 0;   // the handoff angle points you at the hole
+  spawnDefense();
+  updateBoard();
+  banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
+  say(g.play.say);
+  if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
+}
+function spawnDefense(){
+  const g = game, d = (g.q - 1)/3;
+  const D = [];
+  const add = (type, x, z, speed, lat, react, delay) => D.push({type, x, z, speed, lat, react, delay, state:"read", vx:0, vz:0, num: Math.floor(rand(2, 99)), anim: rand(0, 6), downT:0});
+  // one defensive lineman sheds his block after a beat
+  add("DL", g.play.hole >= 0 ? rand(-3.5, -2) : rand(2, 3.5), 1, 5.2 + d*0.6, 2.6, 0.35, 2.4 - d*0.6);   // backside, away from the hole
+  add("LB", rand(-7, -4), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
+  add("LB", rand(-1.5, 1.5), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.2);
+  add("LB", rand(4, 7), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
+  add("DB", rand(-10, -6), rand(11, 14), 7.9 + d*0.6, 6, 0.26, 0.35);
+  add("DB", rand(6, 10), rand(11, 14), 7.9 + d*0.6, 6, 0.26, 0.35);
+  add("DB", -17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
+  add("DB", 17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
+  // goal line: defenders can't line up past the end zone
+  for (const x of D) x.z = Math.min(x.z, g.ballOn + 2);
+  g.defenders = D;
+}
+
+/* ============ live play ============ */
+function stepsPerSec(t){ while (input.steps.length && t - input.steps[0] > 1.2) input.steps.shift(); return input.steps.length/1.2; }
+function laggedX(p, lag, t){
+  const h = p.xHist; for (let i=h.length-1;i>=0;i--) if (t - h[i].t >= lag) return h[i].x;
+  return h.length ? h[0].x : p.x;
+}
+function endPlay(kind, extra){
+  const g = game, p = g.p;
+  if (g.phase !== "live") return;
+  g.phase = "dead"; g.t = 2.6; sfx.whistle();
+  const gain = kind === "td" ? g.ballOn : Math.round(p.z);
+  g.result = {kind, gain};
+  g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain);
+  if (kind === "td"){
+    g.home += 7; g.stats.tds++; sfx.cheer(); g.flash = 1.2;
+    banner("Touchdown!", `${gain} yard run. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
+    return;
+  }
+  const label = kind === "out" ? "Out of bounds" : kind === "stuffed" ? "Stuffed at the line" : extra || "Tackled";
+  const gl = gain > 0 ? `Gain of ${gain}` : gain === 0 ? "No gain" : `Loss of ${-gain}`;
+  banner(gl, label, 2.4);
+  if (gain >= 10) { sfx.cheer(); } else if (gain <= 0) sfx.groan();
+}
+function resolveContact(d, t){
+  const g = game, p = g.p, dx = Math.abs(d.x - p.x);
+  d.state = "resolved";
+  const sinceShoulder = t - p.lastShoulder, sinceStiff = t - p.lastStiff, sinceJuke = t - p.lastJuke;
+  if (sinceShoulder < 0.5 && p.speed > 4.5){
+    const chance = d.type === "DL" ? 0.45 : d.type === "LB" ? 0.72 : 0.88;
+    if (Math.random() < chance){ d.state = "down"; d.vz = 6; p.speed *= 0.72; g.stats.trucks++; g.stats.broken++; sfx.pads(); g.shake = 0.5;
+      banner("Trucked him!", "", 1); say("Trucked!"); crowd(0.3, 1); return; }
+  }
+  if (sinceStiff < 0.5 && d.type !== "DL"){
+    if (Math.random() < 0.75){ d.state = "down"; d.vx = (d.x < p.x ? -5 : 5); p.speed *= 0.9; g.stats.stiffs++; g.stats.broken++; sfx.pads(); g.shake = 0.3;
+      banner("Stiff arm!", "", 1); crowd(0.3, 1); return; }
+  }
+  if (dx > 1.0){
+    d.state = "down"; d.vx = (d.x < p.x ? -3 : 3); sfx.whoosh();
+    if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); say("Juked him!"); crowd(0.3, 1); }
+    return;
+  }
+  if (dx > 0.7 && p.speed > 7 && Math.random() < 0.3){ d.state = "down"; g.stats.broken++; sfx.pads(); banner("Broke the tackle!", "", 1); return; }
+  sfx.hit(); g.shake = 0.6;
+  endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
+}
+function updateLive(dt, t){
+  const g = game, p = g.p;
+  g.stats.work += dt;
+  // speed from step cadence
+  const sps = stepsPerSec(t);
+  const target = clamp(sps*1.9, 0, 9.3);
+  p.speed += clamp(target - p.speed, -5*dt, 6*dt);
+  p.bob += dt*(2 + sps*2.2);
+  // moves
+  if (input.juke && t - p.lastJuke > 0.55){
+    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*2.3; p.jukeT = 0; p.lastJuke = t; p.speed *= 0.85; sfx.whoosh();
+  }
+  if (input.shoulder){ p.lastShoulder = t; p.dip = 1; }
+  if (input.stiff){ p.lastStiff = t; p.stiffAnim = 1; }
+  input.juke = 0; input.shoulder = input.stiff = false;
+  if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
+  p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
+  // drift toward the called hole before the line, like following your blockers
+  if (p.z < 0 && t - p.lastJuke > 0.4) p.x += clamp(g.play.hole - p.x, -1, 1)*dt*3.2;
+  const prevZ = p.z;
+  p.z += p.speed*dt;
+  p.xHist.push({t, x:p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
+  // the line of scrimmage: run through the hole or get stuffed
+  if (prevZ < 0 && p.z >= 0 && !p.crossedLOS){
+    p.crossedLOS = true;
+    const inScrum = Math.abs(p.x) < 4.8, inHole = Math.abs(p.x - g.play.hole) < 1.7;
+    if (inScrum && !inHole){
+      if (t - p.lastShoulder < 0.6 && Math.random() < 0.4){ banner("Pushed the pile!", "", 1); sfx.pads(); p.speed *= 0.5; }
+      else { p.z = 0.5; sfx.hit(); endPlay("stuffed"); return; }
+    }
+  }
+  if (p.speed < 0.5 && p.z < 0){ p.stall += dt; } else p.stall = 0;
+  // defenders
+  for (const d of g.defenders){
+    d.anim += dt*8;
+    if (d.state === "down"){ d.downT += dt; d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); continue; }
+    if (d.state === "resolved") continue;
+    if (g.t > -d.delay){ continue; }      // g.t counts down from 0 after the snap
+    const lx = laggedX(p, d.react, t);
+    const tx = lx, tz = p.z + p.speed*0.25;
+    const ddx = tx - d.x, ddz = tz - d.z, dist = Math.max(0.01, Math.hypot(ddx, ddz));
+    let vx = ddx/dist*d.speed, vz = ddz/dist*d.speed;
+    vx = clamp(vx, -d.lat, d.lat);
+    // linemen stay in the scrum until they shed the block
+    d.x += vx*dt; d.z += vz*dt; d.vx = vx; d.vz = vz;
+    if (Math.abs(d.z - p.z) < 0.8 && Math.abs(d.x - p.x) < 1.6){ resolveContact(d, t); if (g.phase !== "live") return; }
+  }
+  g.t -= dt;
+  // ends of the play
+  if (p.z >= g.ballOn){ p.z = g.ballOn; endPlay("td"); return; }
+  if (Math.abs(p.x) > FH){ endPlay("out"); return; }
+  if (p.stall > 3.5){ sfx.hit(); endPlay("tackle", "Hit in the backfield. Keep those knees moving."); }
+}
+
+/* ============ between plays ============ */
+function afterPlay(){
+  const g = game, r = g.result;
+  g.firstPlay = false; hint(null);
+  g.clock -= r.kind === "td" ? rand(8, 15) : rand(32, 48);
+  let driveOver = false;
+  if (r.kind === "td"){ driveOver = true; }
+  else {
+    g.ballOn -= r.gain; g.toGo -= r.gain;
+    if (g.toGo <= 0){ g.down = 1; g.toGo = Math.min(10, g.ballOn); g.stats.firstDowns++; banner("First down!", "Move the chains.", 1.6); say("First down!"); sfx.cheer(); }
+    else if (g.down >= 4){ driveOver = true; banner("Turnover on downs", "The Raiders take over.", 2.2); say("Turnover on downs"); sfx.groan(); }
+    else g.down++;
+  }
+  if (driveOver){ startOpponent(r.kind === "td"); return; }
+  if (!clockCheck()) startHuddle(false);
+}
+function clockCheck(){
+  const g = game;
+  if (g.clock > 0) return false;
+  if (g.q >= 4){ endGame(); return true; }
+  g.q++; g.clock = QUARTER_SECONDS;
+  if (g.q === 3){ banner("Halftime", `Mustangs ${g.home}, Raiders ${g.away}. Get some water.`, 3); say("Halftime"); g.ballOn = 75; g.down = 1; g.toGo = 10;
+    g.phase = "break"; g.t = mode === "body" ? 20 : 5; updateBoard(); return true; }
+  banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); g.phase = "break"; g.t = 3; updateBoard(); return true;
+}
+function startOpponent(afterTD){
+  const g = game, d = (g.q - 1)/3, r = Math.random();
+  let text, pts = 0;
+  if (r < 0.28 + d*0.1){ pts = 7; text = "Raiders march down and score a touchdown."; }
+  else if (r < 0.5 + d*0.1){ pts = 3; text = "Raiders kick a field goal."; }
+  else if (r < 0.7){ text = "Mustangs defense forces a punt."; }
+  else { text = "Interception! The Mustangs defense takes it back."; }
+  g.away += pts; g.clock -= rand(80, 160);
+  g.phase = "opp"; g.t = 3.4; g.oppText = text; g.oppShowIn = afterTD ? 2.2 : 1.2; g.oppPts = pts;
+  g.ballOn = text.startsWith("Interception") ? Math.round(rand(40, 60)) : 75; g.down = 1; g.toGo = 10;
+}
+function endGame(){
+  const g = game; g.phase = "over"; g.clock = 0; updateBoard();
+  $("board").hidden = true; $("banner").hidden = true; $("pauseBtn").hidden = true; hint(null);
+  const win = g.home > g.away, tie = g.home === g.away;
+  $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
+  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries} plays.`;
+  const s = g.stats, ypc = s.carries ? (s.yards/s.carries).toFixed(1) : "0.0";
+  const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs]];
+  $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
+  $("endScreen").hidden = false;
+  say(win ? "Homecoming win! Mustangs take it." : "Final score.", true);
+  if (win) sfx.cheer();
+  try{ wakeLock?.release(); }catch(e){}
+}
+
+/* ============ main update ============ */
+let paused = false;
+function update(dt){
+  const g = game; if (!g || paused) return;
+  const t = now();
+  if (bannerT > 0){ bannerT -= dt; if (bannerT <= 0) $("banner").hidden = true; }
+  g.flash = Math.max(0, g.flash - dt); g.shake = Math.max(0, g.shake - dt);
+  if (mode === "body" && g.phase !== "over"){
+    if (t - lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
+  }
+  if (g.phase === "huddle"){
+    g.t -= dt;
+    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
+  } else if (g.phase === "cadence"){
+    g.t -= dt;
+    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", "Knees up!", 0.7); }
+    if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4); }
+  } else if (g.phase === "live"){
+    updateLive(dt, t);
+  } else if (g.phase === "dead"){
+    g.t -= dt;
+    for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
+    if (g.t <= 0) afterPlay();
+  } else if (g.phase === "opp"){
+    if (g.oppShowIn > 0){ g.oppShowIn -= dt; if (g.oppShowIn <= 0){ banner("Raiders ball", g.oppText, 3); say(g.oppText); if (g.oppPts) sfx.groan(); else sfx.cheer(); } }
+    g.t -= dt;
+    if (g.t <= 0 && bannerT <= 0.2){ if (!clockCheck()) startHuddle(true); }
+  } else if (g.phase === "break"){
+    g.t -= dt; if (g.t <= 0) startHuddle(true);
+  }
+  updateBoard();
+}
+
+/* ============ rendering ============ */
+let crowdDots = [];
+function makeCrowd(){
+  crowdDots = Array.from({length: Math.round(W/3)}, () => ({x: rand(0, W), y: rand(0, 1), c: Math.random() < 0.45 ? COL.home : Math.random() < 0.5 ? "#d8d2c4" : "#2b3247", f: rand(0, 6)}));
+}
+function camState(){
+  const g = game, p = g ? g.p : {x:0, z:-5, speed:0, bob:0, dip:0};
+  const bob = Math.sin(p.bob)*0.07*Math.min(1, p.speed/4);
+  const dip = (p.dip || 0)*0.55;
+  const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
+  return {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip, F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40};
+}
+function proj(c, X, Y, Z){
+  const rz = Z - c.z; if (rz < 0.35) return null;
+  const s = c.F/rz; return {x: W/2 + (X - c.x)*s, y: c.hor + (c.h - Y)*s, s};
+}
+function quad(c, x1, x2, z1, z2, color){
+  z1 = Math.max(z1, c.z + 0.4); if (z2 <= z1) return;
+  const a = proj(c, x1, 0, z1), b = proj(c, x2, 0, z1), d = proj(c, x2, 0, z2), e = proj(c, x1, 0, z2);
+  if (!a || !b || !d || !e) return;
+  cx.fillStyle = color; cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.lineTo(d.x, d.y); cx.lineTo(e.x, e.y); cx.closePath(); cx.fill();
+}
+function lineAt(c, z, color, w, x1 = -FH, x2 = FH){
+  const a = proj(c, x1, 0, z), b = proj(c, x2, 0, z); if (!a || !b) return;
+  cx.strokeStyle = color; cx.lineWidth = Math.max(1, w*a.s); cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
+}
+function drawStadium(c, t){
+  const hor = c.hor;
+  const g = cx.createLinearGradient(0, 0, 0, hor);
+  g.addColorStop(0, "#070b18"); g.addColorStop(1, "#1a2547");
+  cx.fillStyle = g; cx.fillRect(0, 0, W, hor);
+  // stands
+  const top = hor - Math.min(H*0.16, 150);
+  cx.fillStyle = "#11182c"; cx.fillRect(0, top, W, hor - top);
+  const roar = game && game.flash > 0;
+  for (const d of crowdDots){
+    const y = top + 4 + d.y*(hor - top - 10);
+    const jump = roar ? Math.sin(t*14 + d.f)*2 : Math.sin(t*2 + d.f)*0.6;
+    cx.fillStyle = d.c; cx.fillRect(d.x, y + jump, 2.2, 3);
+  }
+  if (roar && Math.random() < 0.6){ cx.fillStyle = "rgba(255,255,255,.9)"; cx.fillRect(rand(0,W), rand(top, hor), 3, 3); }
+  // light towers
+  for (const lx of [W*0.12, W*0.88]){
+    const ly = top - Math.min(H*0.1, 80);
+    const glow = cx.createRadialGradient(lx, ly, 2, lx, ly, Math.min(W,H)*0.25);
+    glow.addColorStop(0, "rgba(255,248,220,.55)"); glow.addColorStop(1, "rgba(255,248,220,0)");
+    cx.fillStyle = glow; cx.fillRect(lx - W*0.3, ly - H*0.3, W*0.6, H*0.6);
+    cx.fillStyle = "#fffbe8"; cx.fillRect(lx - 16, ly - 6, 32, 12);
+  }
+  // banner on the facade
+  cx.fillStyle = COL.home; cx.fillRect(0, top - 6, W, 6);
+  cx.fillStyle = COL.gold; cx.font = `700 ${Math.round(clamp(H*0.022, 11, 18))}px "Barlow Condensed", sans-serif`; cx.textAlign = "center";
+  cx.fillText("WELCOME HOME, MUSTANGS", W/2, top - 10);
+}
+function drawField(c){
+  const g = game;
+  cx.fillStyle = COL.apron; cx.fillRect(0, c.hor, W, H - c.hor);
+  const ballOn = g ? g.ballOn : 75;
+  const zFar = c.z + 90;
+  // mowing stripes every 5 yards, aligned to the real yard lines
+  for (let k = -1; k <= 21; k++){
+    const z2 = ballOn - 5*k, z1 = z2 - 5;
+    if (z2 < c.z || z1 > zFar) continue;
+    if (z1 >= ballOn) continue;
+    quad(c, -FH, FH, z1, Math.min(z2, ballOn), k % 2 ? COL.turfA : COL.turfB);
+  }
+  // end zone
+  quad(c, -FH, FH, ballOn, ballOn + 10, COL.away);
+  const ez = proj(c, 0, 0, ballOn + 5);
+  if (ez){ cx.save(); cx.fillStyle = "rgba(255,255,255,.85)"; cx.font = `400 ${Math.round(ez.s*3.4)}px "Alfa Slab One", serif`; cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.translate(ez.x, ez.y); cx.scale(1, 0.45); cx.fillText("RAIDERS", 0, 0); cx.restore(); }
+  // yard lines, numbers, hashes
+  for (let k = 0; k <= 20; k++){
+    const z = ballOn - 5*k; if (z < c.z + 0.4 || z > zFar) continue;
+    lineAt(c, z, COL.line, k === 0 ? 0.2 : 0.11);
+    if (k % 2 === 0 && k > 0 && k < 20){
+      const yl = k*5 <= 50 ? k*5 : 100 - k*5;
+      for (const sx of [-1, 1]){
+        const p = proj(c, sx*(FH - 6), 0, z); if (!p || p.s < 2) continue;
+        cx.fillStyle = "rgba(255,255,255,.8)"; cx.font = `700 ${Math.round(p.s*1.9)}px "Barlow Condensed", sans-serif`; cx.textAlign = "center";
+        cx.save(); cx.translate(p.x, p.y); cx.scale(1, 0.5); cx.fillText(String(yl), 0, 0); cx.restore();
+      }
+    }
+  }
+  for (let z = Math.ceil(c.z + 1); z < Math.min(c.z + 40, ballOn); z++){
+    for (const hx of [-3.08, 3.08]){ const a = proj(c, hx - 0.3, 0, z), b = proj(c, hx + 0.3, 0, z); if (a && b){ cx.strokeStyle = "rgba(255,255,255,.7)"; cx.lineWidth = Math.max(1, 0.08*a.s); cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke(); } }
+  }
+  // sidelines
+  for (const sx of [-FH, FH]){ const a = proj(c, sx, 0, c.z + 0.5), b = proj(c, sx, 0, zFar); if (a && b){ cx.strokeStyle = COL.line; cx.lineWidth = 3; cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke(); } }
+  // TV lines: blue line of scrimmage, gold line to gain
+  if (g && g.phase !== "opp"){
+    lineAt(c, 0, "rgba(70,140,255,.85)", 0.22);
+    if (g.toGo < g.ballOn) lineAt(c, g.toGo, "rgba(255,207,63,.9)", 0.22);
+  }
+}
+function figure(c, X, Z, opts){
+  const p = proj(c, X, 0, Z); if (!p) return;
+  const s = p.s, h = 2.0*s, w = 0.95*s;
+  if (p.x < -w*2 || p.x > W + w*2 || s < 0.6) return;
+  const {jersey, trim, num, down, anim = 0, back, crouch = 0} = opts;
+  cx.save(); cx.translate(p.x, p.y);
+  if (down){
+    cx.fillStyle = "rgba(0,0,0,.25)"; cx.beginPath(); cx.ellipse(0, 0, w*1.1, w*0.25, 0, 0, 7); cx.fill();
+    cx.fillStyle = jersey; cx.fillRect(-w*0.9, -w*0.45, w*1.5, w*0.42);
+    cx.fillStyle = "#e9e4d8"; cx.beginPath(); cx.arc(w*0.75, -w*0.28, w*0.26, 0, 7); cx.fill();
+    cx.restore(); return;
+  }
+  const ch = h*(1 - crouch*0.25);
+  cx.fillStyle = "rgba(0,0,0,.28)"; cx.beginPath(); cx.ellipse(0, 0, w*0.6, w*0.16, 0, 0, 7); cx.fill();
+  // legs
+  const run = Math.sin(anim)*0.12*ch;
+  cx.fillStyle = COL.pants;
+  cx.fillRect(-w*0.32, -ch*0.46 + Math.max(0, run), w*0.24, ch*0.46 - Math.max(0, run));
+  cx.fillRect(w*0.08, -ch*0.46 + Math.max(0, -run), w*0.24, ch*0.46 - Math.max(0, -run));
+  cx.fillStyle = "#151515"; cx.fillRect(-w*0.34, -ch*0.06, w*0.28, ch*0.06); cx.fillRect(w*0.06, -ch*0.06, w*0.28, ch*0.06);
+  // torso and pads
+  cx.fillStyle = jersey;
+  cx.beginPath(); cx.roundRect(-w*0.5, -ch*0.86, w, ch*0.44, w*0.12); cx.fill();
+  cx.fillStyle = trim; cx.fillRect(-w*0.5, -ch*0.5, w, ch*0.04);
+  // arms
+  cx.fillStyle = jersey; const sw = Math.sin(anim + 1.5)*0.08*ch;
+  cx.fillRect(-w*0.68, -ch*0.84 + sw, w*0.2, ch*0.3); cx.fillRect(w*0.48, -ch*0.84 - sw, w*0.2, ch*0.3);
+  cx.fillStyle = COL.skinDark; cx.fillRect(-w*0.66, -ch*0.56 + sw, w*0.16, ch*0.1); cx.fillRect(w*0.5, -ch*0.56 - sw, w*0.16, ch*0.1);
+  // number
+  if (s > 5){ cx.fillStyle = trim; cx.font = `700 ${Math.round(ch*0.2)}px "Barlow Condensed", sans-serif`; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(String(num), 0, -ch*0.66); }
+  // helmet
+  cx.fillStyle = jersey === COL.home ? "#e8eef8" : "#b3262e";
+  cx.beginPath(); cx.arc(0, -ch*0.95, w*0.3, 0, 7); cx.fill();
+  if (!back){ cx.strokeStyle = "#cfcfcf"; cx.lineWidth = Math.max(1, w*0.05); cx.beginPath(); cx.moveTo(-w*0.2, -ch*0.92); cx.lineTo(w*0.2, -ch*0.92); cx.moveTo(-w*0.18, -ch*0.86); cx.lineTo(w*0.18, -ch*0.86); cx.stroke(); }
+  else { cx.fillStyle = COL.gold; cx.fillRect(-w*0.04, -ch*1.24, w*0.08, ch*0.28); }
+  cx.restore();
+}
+function drawPlayers(c, t){
+  const g = game; if (!g) return;
+  const items = [];
+  // the scrum at the line: offensive line (backs to you) against the defensive line
+  if (g.phase !== "opp"){
+    const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
+    const hole = g.play.hole, slots = [-4, -2, 0, 2, 4];
+    for (let i=0;i<5;i++){
+      let x = slots[i];
+      if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
+      items.push({z: -0.6, x, draw: () => figure(c, x, -0.6, {jersey: COL.home, trim: COL.gold, num: 50 + i*7 % 30, back: true, crouch: 0.4, anim: t*6 + i})});
+    }
+    for (let i=0;i<4;i++){
+      let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
+      items.push({z: 0.7, x, draw: () => figure(c, x, 0.7, {jersey: COL.away, trim: "#f2e6d0", num: 90 + i, crouch: 0.4, anim: t*6 + i*2})});
+    }
+  }
+  for (const d of g.defenders){
+    if (g.phase === "opp") break;
+    items.push({z: d.z, x: d.x, draw: () => figure(c, d.x, d.z, {jersey: COL.away, trim: "#f2e6d0", num: d.num, down: d.state === "down" || (d.state === "resolved" && g.phase === "dead"), anim: (g.phase === "live" ? d.anim : 0), crouch: g.phase === "live" ? 0 : 0.25})});
+  }
+  items.sort((a, b) => b.z - a.z);
+  for (const it of items) if (it.z > c.z + 0.4) it.draw();
+  // hole arrow before the snap
+  if (g.phase === "huddle" || g.phase === "cadence"){
+    const a = proj(c, g.play.hole, 0.05, 1.6), b = proj(c, g.play.hole, 0.05, 4.5);
+    if (a && b){
+      const pulse = 0.6 + 0.4*Math.sin(t*6);
+      cx.fillStyle = `rgba(255,207,63,${pulse})`;
+      cx.beginPath(); cx.moveTo(b.x, b.y); cx.lineTo(a.x - a.s*1.0, a.y); cx.lineTo(a.x + a.s*1.0, a.y); cx.closePath(); cx.fill();
+    }
+  }
+}
+function drawSelf(c, t){
+  const g = game; if (!g || g.phase === "opp" || g.phase === "break") return;
+  const p = g.p, sp = Math.min(1, p.speed/6), u = Math.min(W, H);
+  const bob = Math.sin(p.bob)*u*0.03*sp;
+  // carrying arm and ball, bottom right
+  cx.save(); cx.translate(W*0.72, H + u*0.02 - bob);
+  cx.rotate(-0.25);
+  cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.12, -u*0.22, u*0.26, u*0.3, u*0.05); cx.fill();
+  cx.fillStyle = COL.ball; cx.beginPath(); cx.ellipse(-u*0.02, -u*0.24, u*0.13, u*0.075, -0.3, 0, 7); cx.fill();
+  cx.strokeStyle = "#f1e7d6"; cx.lineWidth = Math.max(2, u*0.006); cx.beginPath(); cx.moveTo(-u*0.08, -u*0.26); cx.lineTo(u*0.04, -u*0.29); cx.stroke();
+  for (let i=0;i<4;i++){ const lx = -u*0.06 + i*u*0.03; cx.beginPath(); cx.moveTo(lx, -u*0.27 + i*0.003*u); cx.lineTo(lx + u*0.005, -u*0.24 + i*0.003*u); cx.stroke(); }
+  cx.fillStyle = COL.skin; cx.beginPath(); cx.ellipse(u*0.07, -u*0.2, u*0.06, u*0.045, 0, 0, 7); cx.fill();
+  cx.restore();
+  // free arm pumps, or punches out for a stiff arm
+  const pump = Math.sin(p.bob + Math.PI)*u*0.05*sp;
+  const ext = p.stiffAnim;
+  cx.save(); cx.translate(W*0.24 + ext*W*0.12, H + u*0.06 - pump - ext*H*0.22);
+  cx.rotate(0.2 - ext*0.2);
+  cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.07, -u*0.12, u*0.14, u*0.24, u*0.04); cx.fill();
+  cx.fillStyle = COL.skin; cx.beginPath(); cx.roundRect(-u*0.055, -u*0.2 - ext*u*0.06, u*0.11, u*0.1 + ext*u*0.06, u*0.03); cx.fill();
+  cx.restore();
+  // shoulder pad dropping into view when trucking
+  if (p.dip > 0){
+    cx.fillStyle = COL.homeDark; cx.globalAlpha = Math.min(1, p.dip*1.5);
+    cx.beginPath(); cx.ellipse(W*0.38, H*1.02, W*0.42, H*0.16*p.dip + 10, -0.15, 0, 7); cx.fill(); cx.globalAlpha = 1;
+  }
+  // speed streaks
+  if (g.phase === "live" && p.speed > 7){
+    cx.strokeStyle = "rgba(255,255,255,.18)"; cx.lineWidth = 2;
+    for (let i=0;i<10;i++){ const a = rand(0, Math.PI*2), r1 = u*rand(0.35, 0.5), r2 = r1 + u*rand(0.1, 0.25);
+      cx.beginPath(); cx.moveTo(W/2 + Math.cos(a)*r1, H*0.45 + Math.sin(a)*r1); cx.lineTo(W/2 + Math.cos(a)*r2, H*0.45 + Math.sin(a)*r2); cx.stroke(); }
+  }
+}
+function drawPip(){
+  if (mode !== "body" || !stream || video.readyState < 2) return;
+  const pw = Math.min(W*0.24, 160), ph = pw*((video.videoHeight/video.videoWidth) || 0.75);
+  const x = 16, y = H - ph - 16 - (H > W ? 60 : 0);
+  cx.save(); cx.globalAlpha = 0.85; cx.beginPath(); cx.roundRect(x, y, pw, ph, 10); cx.clip();
+  cx.translate(x + pw, y); cx.scale(-1, 1); cx.drawImage(video, 0, 0, pw, ph); cx.restore();
+  if (img){ cx.fillStyle = COL.gold; for (const k of ["nose","lSh","rSh","lHip","rHip","lKn","rKn","lWr","rWr"]){ const q = img[IDX[k]]; if (q.v < 0.5) continue; cx.beginPath(); cx.arc(x + (1-q.x)*pw, y + q.y*ph, 3, 0, 7); cx.fill(); } }
+}
+function render(t){
+  const c = camState();
+  cx.save();
+  if (game && game.shake > 0){ cx.translate(rand(-1,1)*game.shake*12, rand(-1,1)*game.shake*12); }
+  drawStadium(c, t);
+  drawField(c);
+  drawPlayers(c, t);
+  cx.restore();
+  drawSelf(c, t);
+  if (game && game.flash > 0){ cx.fillStyle = `rgba(255,207,63,${game.flash*0.15})`; cx.fillRect(0, 0, W, H); }
+  drawPip();
+}
+
+/* ============ loop and flow ============ */
+let last = 0;
+function frame(ms){
+  requestAnimationFrame(frame);
+  const t = ms/1000, dt = Math.min(0.05, last ? t - last : 0); last = t;
+  if (mode === "body") detect();
+  if (calibrating && updateCalib(dt)){ calibrating = false; $("calibScreen").hidden = true; if (recentering){ recentering = false; paused = false; last = 0; } else beginGame(); }
+  update(dt);
+  render(t);
+}
+let calibrating = false, recentering = false, wakeLock = null;
+function setStatus(text, isErr){ const s = $("status"); s.textContent = text; s.classList.toggle("err", !!isErr); }
+async function keepAwake(){ try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch(e){} }
+function primeAudio(){
+  if (!AC) initAudio(); else if (AC.state === "suspended") AC.resume();
+  if (window.speechSynthesis){ try{ speechSynthesis.speak(new SpeechSynthesisUtterance("")); }catch(e){} }
+}
+async function startTouch(){ primeAudio(); mode = "touch"; keepAwake(); $("startScreen").hidden = true; beginGame(); }
+async function startBody(){
+  primeAudio();
+  $("touchBtn").disabled = $("bodyBtn").disabled = true;
+  try{
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error("insecure");
+    if (!landmarker) await loadTracker();
+    if (!stream) await startCamera();
+    mode = "body"; keepAwake(); body.ok = false; calibHold = 0; calibS = [];
+    $("startScreen").hidden = true; $("calibScreen").hidden = false; calibrating = true;
+  }catch(e){
+    let msg = "Body play can't start here. Open the game from its own https link, like GitHub Pages. Touch play works here.";
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "The camera isn't available in this viewer. Open the game from its own https link to play with your body. Touch play works here.";
+    else if (e && e.name === "NotFoundError") msg = "No camera found on this device.";
+    setStatus(msg, true);
+  }finally{ $("touchBtn").disabled = $("bodyBtn").disabled = false; }
+}
+function beginGame(){
+  $("endScreen").hidden = true; $("board").hidden = false; $("pauseBtn").hidden = mode !== "touch";
+  crowd(0.12, 2);
+  newGame();
+}
+function pause(){ if (!game || game.phase === "over") return; paused = true; $("pauseScreen").hidden = false; }
+$("touchBtn").addEventListener("click", startTouch);
+$("bodyBtn").addEventListener("click", startBody);
+$("againBtn").addEventListener("click", () => { primeAudio(); beginGame(); });
+$("pauseBtn").addEventListener("click", e => { e.stopPropagation(); pause(); });
+$("resumeBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; last = 0; });
+$("recenterBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; if (mode === "body"){ body.ok = false; calibHold = 0; calibS = []; calibrating = true; recentering = true; $("calibScreen").hidden = false; paused = true; } });
+$("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; endGame(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
+
+// hooks for automated testing only
+window.__hh = { get game(){ return game; }, input, startTouch, set paused(v){ paused = v; } };
+
+resize();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
