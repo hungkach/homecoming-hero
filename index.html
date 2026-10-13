@@ -123,6 +123,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     </dl>
     <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
+    <label class="toggle"><input type="checkbox" id="announcerOn" checked> Funny announcer</label>
     <label class="pick" for="voiceSel" id="voicePick" hidden>Voice
       <select id="voiceSel"></select>
     </label>
@@ -859,12 +860,118 @@ let lastSpoke = -9;
 function say(text, force){
   if (!$("voiceOn").checked || !window.speechSynthesis) return;
   const t = now(); if (!force && t - lastSpoke < 1.6) return; lastSpoke = t;
+  speak(text, false);
+}
+// the booth uses a different voice than the coach when the device has one, pitched up and quicker
+function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= voiceScore(voices[0]) - 12 && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
+function speak(text, booth){
   try{
-    speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text);
-    if (voice){ u.voice = voice; u.lang = voice.lang; }
-    u.rate = voice && voiceScore(voice) >= 30 ? 1.05 : 1.12; u.pitch = 0.95;   // natural voices already speak briskly
+    if (!booth) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text), v = booth ? boothVoice() : voice;
+    if (v){ u.voice = v; u.lang = v.lang; }
+    const natural = v && voiceScore(v) >= 30;
+    u.rate = booth ? (natural ? 1.12 : 1.2) : natural ? 1.05 : 1.12; u.pitch = booth ? 1.15 : 0.95;   // natural voices already speak briskly
     speechSynthesis.speak(u);
   }catch(e){}
+}
+
+
+/* ============ announcer ============ */
+// The booth: a second, more excited voice with fitness jokes. It never talks over a play call:
+// lines wait in a queue until the coach voice is quiet, and stale ones are dropped.
+const CALLS = {
+  open: ["Welcome to homecoming! Tonight's forecast: sweat, with a hundred percent chance of burning legs.",
+    "Good evening, football fans! Our running back is warmed up, stretched out, and slightly nervous about leg day.",
+    "It's homecoming night, the crowd is loud, and somebody's quads are about to file a complaint."],
+  huddle: ["Breathe in through the nose, folks. The Raiders are breathing through their mouths.",
+    "A reminder from the trainer's table: hydrate, or die-drate.",
+    "Fun fact: a running back does more squats in one game than the whole marching band.",
+    "The Raiders' coach just asked if our back does CrossFit. Nobody had to ask. It came up on its own.",
+    "Heart rate check: elevated. Spirits: also elevated.",
+    "If you're keeping score at home, keep your knees up at home too.",
+    "The concession stand reports record nacho sales. The running back reports record leg burn.",
+    "Somewhere a personal trainer is crying happy tears."],
+  third: ["Third and long. This is where the core work pays off.",
+    "Third down! Time to earn that post-game pizza.",
+    "Big third down. The trainer says this one counts as a full set."],
+  bigRun: ["Look at those knees! Somebody call a cardiologist, in a good way!",
+    "Our back is running like the ice cream truck just turned the corner!",
+    "That's not a run, that's an interval session with a scoreboard!",
+    "Knees up, chest up, ratings up!",
+    "Somebody check the treadmill, because that back just broke it!"],
+  td: ["Touchdown! Six points and roughly twelve calories!",
+    "Touchdown! Somebody get our back a protein shake!",
+    "Into the end zone! That's what we call a finisher, folks!",
+    "The legs will feel that one tomorrow, and the scoreboard feels it tonight!",
+    "Touchdown! Rest is earned, and that was earned!"],
+  juke: ["Ankles broken, hamstrings activated!",
+    "Left that defender doing lunges!",
+    "Juke! That linebacker needs a better warm-up routine.",
+    "Side shuffle! That's agility ladder money right there!"],
+  truck: ["Trucked! That's what squats are for, folks!",
+    "Leg day pays off! Right through him!",
+    "Lowered the shoulder like a deadlift lockout!"],
+  stiff: ["Stiff arm! That's a perfect push-up, just sideways!",
+    "Get off me! The stiff arm is the official handshake of homecoming.",
+    "Stiff arm! Somebody's been doing their presses."],
+  stuffed: ["Stuffed! The knees need to get up, the knees need to get up!",
+    "Stopped cold. Like my motivation on a Monday.",
+    "No gain. Even the mascot's doing more cardio than that.",
+    "Hit at the line. The legs said yes, the hole said no.",
+    "Stuffed! Back to the huddle for some deep breathing.",
+    "Nothing there. That's a rest set, and rest sets are over."],
+  slow: ["Those knees are moving like they're paying rent by the step!",
+    "Pick 'em up! The water break comes after the touchdown!",
+    "Let's go! My grandma does high knees faster, and she's on a recumbent bike!"],
+  fast: ["Look at that turnover! Knees like a sewing machine!",
+    "That cadence is ridiculous! The Fitbit just asked for a timeout!",
+    "Pistons! The knees are pistons!"],
+  first: ["First down! Move the chains, move the heart rate!",
+    "Moving the sticks! And the glutes!"],
+  sack: ["Sacked! Lower stance next time. Think quarter squat, not quarter pounder.",
+    "Sack! The quarterback would like a word, and maybe a chiropractor.",
+    "Ooh, he got home. Sit lower, punch earlier!"],
+  clean: ["Clean pocket! That block was a wall sit with attitude!",
+    "What a pickup! The quarterback could have read a novel back there!"],
+  catch: ["Soft hands, strong core!", "Caught it in stride! Now turn on the afterburners!"],
+  drop: ["Dropped! Hands out early, like catching groceries off the top shelf.",
+    "Incomplete. The ball was there, the hands were on a coffee break."],
+  oppScore: ["Raiders score. Use that anger. Anger burns calories.",
+    "The Raiders put points up. Answer with your knees!"],
+  half: ["Halftime! The band is tired just from watching that workout.",
+    "Halftime. Get some water, shake out the legs, and do not sit down for too long."],
+  win: ["Ballgame! Mustangs win, and somebody's going to feel this tomorrow!",
+    "That's the final! A homecoming win, and a personal best on the stairs tomorrow morning."],
+  loss: ["Tough loss. But the real win is the muscle soreness you'll have tomorrow.",
+    "Final score. Not the result we wanted, but those legs got stronger tonight."]
+};
+const callBags = {}, annQ = [];
+let annLast = -99;
+function pickCall(kind){
+  const L = CALLS[kind]; let b = callBags[kind];
+  if (!b || !b.length){ b = callBags[kind] = L.map((_, i) => i); for (let i = b.length - 1; i > 0; i--){ const j = Math.floor(Math.random()*(i + 1)); [b[i], b[j]] = [b[j], b[i]]; } }
+  return L[b.pop()];
+}
+// kind: a CALLS key. o.force skips the chance and the cooldown; o.delay waits in seconds; o.chance 0..1
+function announce(kind, o = {}){
+  if (!$("announcerOn").checked || !$("voiceOn").checked || !window.speechSynthesis) return false;
+  const t = now();
+  if (!o.force && (Math.random() > (o.chance ?? 1) || t - annLast < 8)) return false;
+  annLast = t;
+  annQ.push({kind, text: pickCall(kind), at: t + (o.delay || 0), until: t + (o.delay || 0) + (o.force ? 6 : 3.5)});
+  return true;
+}
+function announcerTick(){
+  if (!annQ.length) return;
+  const t = now();
+  // huddle chatter has to finish before the snap count, or it waits for the next huddle
+  const preSnap = k => k === "open" || k === "huddle" || k === "third";
+  const roomy = game && game.phase === "huddle" && game.t > 3.2;
+  while (annQ.length && (t > annQ[0].until || (preSnap(annQ[0].kind) && !roomy))) annQ.shift();
+  if (!annQ.length || t < annQ[0].at) return;
+  let busy = false; try{ busy = speechSynthesis.speaking || speechSynthesis.pending; }catch(e){}
+  if (busy || t - lastSpoke < 0.4) return;
+  speak(annQ.shift().text, true);
 }
 
 /* ============ input: touch / keyboard ============ */
@@ -1095,6 +1202,9 @@ function startHuddle(newDrive){
   if (g.playType === "run") banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
   else playCard();
   say(g.play.say);
+  if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0) announce("open", {force: true, delay: 0.2});
+  else if (g.down === 3 && g.toGo >= 5) announce("third", {chance: 0.6, delay: 0.2});
+  else announce("huddle", {chance: 0.3, delay: 0.2});
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
 }
 // 3rd and long gets a big card in the huddle: what the play is and the three moves, in order
@@ -1145,12 +1255,15 @@ function endPlay(kind, extra){
   if (kind === "td"){
     g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
     banner("Touchdown!", `${gain} yard ${g.caught ? "catch and run" : "run"}. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
+    announce("td", {force: true, delay: 1.2});
     return;
   }
   const label = kind === "out" ? "Out of bounds" : kind === "stuffed" ? "Stuffed at the line" : extra || "Tackled";
   const gl = gain > 0 ? `Gain of ${gain}` : gain === 0 ? "No gain" : `Loss of ${-gain}`;
   banner(gl, label, 2.4);
   if (gain >= 10) { sfx.cheer(); } else if (gain <= 0) sfx.groan();
+  if (gain >= 15) announce("bigRun", {force: true, delay: 0.3});
+  else if (kind === "stuffed" || gain <= 0) announce("stuffed", {chance: 0.6, delay: 0.3});
 }
 // tc is when contact happened on screen; with camera delay the call is made LAT later
 function resolveContact(d, t, tc = t){
@@ -1160,15 +1273,15 @@ function resolveContact(d, t, tc = t){
   if (sinceShoulder < 0.5 && p.speed > 4.5){
     const chance = d.type === "DL" ? 0.45 : d.type === "LB" ? 0.72 : 0.88;
     if (Math.random() < chance){ d.state = "down"; d.vz = 6; p.speed *= 0.72; g.stats.trucks++; g.stats.broken++; sfx.pads(); g.shake = 0.5;
-      banner("Trucked him!", "", 1); say("Trucked!"); crowd(0.3, 1); return; }
+      banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); crowd(0.3, 1); return; }
   }
   if (sinceStiff < 0.5 && d.type !== "DL"){
     if (Math.random() < 0.75){ d.state = "down"; d.vx = (d.x < p.x ? -5 : 5); p.speed *= 0.9; g.stats.stiffs++; g.stats.broken++; sfx.pads(); g.shake = 0.3;
-      banner("Stiff arm!", "", 1); crowd(0.3, 1); return; }
+      banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); crowd(0.3, 1); return; }
   }
   if (dx > 1.0){
     d.state = "down"; d.vx = (d.x < p.x ? -3 : 3); sfx.whoosh();
-    if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); say("Juked him!"); crowd(0.3, 1); }
+    if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); if (!announce("juke", {chance: 0.5})) say("Juked him!"); crowd(0.3, 1); }
     return;
   }
   if (dx > 0.7 && p.speed > 7 && Math.random() < 0.3){ d.state = "down"; g.stats.broken++; sfx.pads(); banner("Broke the tackle!", "", 1); return; }
@@ -1212,6 +1325,11 @@ function updateLive(dt, t){
   // speed from step cadence
   const sps = stepsPerSec(t);
   const target = clamp(sps*1.9, 0, 9.3);
+  // the booth notices your knees: slow ones once the play is going, fast ones held for a couple of seconds
+  if (-g.t > 1.5 && !p.cadCall){
+    if (sps < 2.2) { p.slowFor = (p.slowFor || 0) + dt; if (p.slowFor > 1.2){ p.cadCall = true; announce("slow", {chance: 0.6}); } }
+    else if (sps > 5.0) { p.fastFor = (p.fastFor || 0) + dt; if (p.fastFor > 1.8){ p.cadCall = true; announce("fast", {chance: 0.6}); } }
+  }
   p.speed += clamp(target - p.speed, -5*dt, 6*dt);
   p.bob += dt*(2 + sps*2.2);
   // moves
@@ -1347,14 +1465,14 @@ function updateRoute(dt, t){
     g.caught = true; g.ball = null; g.playType = "run"; p.crossedLOS = true; cov.type = "LB"; cov.state = "read";
     p.speed *= 0.4;   // the catch breaks your stride
     for (const o of g.defenders) o.delay = Math.min(o.delay, 0.15);   // everyone was already flowing to the ball
-    banner("Caught it!", "Turn it upfield!", 1); say("Caught it!"); sfx.pads(); crowd(0.3, 1);
+    banner("Caught it!", "Turn it upfield!", 1); say("Caught it!"); sfx.pads(); crowd(0.3, 1); announce("catch", {chance: 0.5, delay: 0.6});
   }
 }
 function endRoute(why){
   const g = game; if (g.phase !== "live") return;
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
   g.result = {kind: "incomplete", gain: 0};
-  banner("Incomplete", why, 2.4); sfx.groan();
+  banner("Incomplete", why, 2.4); sfx.groan(); if (/hands/.test(why)) announce("drop", {chance: 0.8, delay: 0.5});
 }
 
 /* ============ pass protection ============ */
@@ -1455,10 +1573,11 @@ function endPass(result, why){
   if (kind === "td"){
     g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
     banner("Touchdown!", `Clean pocket. ${gain} yard strike. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
-  } else if (result === "clean"){ banner("Clean pocket!", `Completed for ${gain}.`, 2.6); say("Clean pocket!"); sfx.cheer(); }
+    announce("td", {force: true, delay: 1.2});
+  } else if (result === "clean"){ banner("Clean pocket!", `Completed for ${gain}.`, 2.6); say("Clean pocket!"); sfx.cheer(); announce("clean", {chance: 0.7, delay: 1}); }
   else if (kind === "pass"){ banner("Hurried throw", `Dumped off for ${gain}.`, 2.4); }
   else if (kind === "incomplete"){ banner("Hurried throw", "Incomplete.", 2.4); sfx.groan(); }
-  else { banner("Sack!", `${why} Loss of ${-gain}.`, 2.6); say("Sack."); sfx.groan(); }
+  else { banner("Sack!", `${why} Loss of ${-gain}.`, 2.6); say("Sack."); sfx.groan(); announce("sack", {chance: 0.7, delay: 0.8}); }
 }
 
 /* ============ between plays ============ */
@@ -1470,7 +1589,7 @@ function afterPlay(){
   if (r.kind === "td"){ driveOver = true; }
   else {
     g.ballOn -= r.gain; g.toGo -= r.gain;
-    if (g.toGo <= 0){ g.down = 1; g.toGo = Math.min(10, g.ballOn); g.stats.firstDowns++; banner("First down!", "Move the chains.", 1.6); say("First down!"); sfx.cheer(); }
+    if (g.toGo <= 0){ g.down = 1; g.toGo = Math.min(10, g.ballOn); g.stats.firstDowns++; banner("First down!", "Move the chains.", 1.6); say("First down!"); sfx.cheer(); announce("first", {chance: 0.35, delay: 0.8}); }
     else if (g.down >= 4){ driveOver = true; banner("Turnover on downs", "The Raiders take over.", 2.2); say("Turnover on downs"); sfx.groan(); }
     else g.down++;
   }
@@ -1482,7 +1601,7 @@ function clockCheck(){
   if (g.clock > 0) return false;
   if (g.q >= 4){ endGame(); return true; }
   g.q++; g.clock = QUARTER_SECONDS;
-  if (g.q === 3){ banner("Halftime", `Mustangs ${g.home}, Raiders ${g.away}. Get some water.`, 3); say("Halftime"); g.ballOn = 75; g.down = 1; g.toGo = 10;
+  if (g.q === 3){ banner("Halftime", `Mustangs ${g.home}, Raiders ${g.away}. Get some water.`, 3); say("Halftime"); announce("half", {force: true, delay: 1}); g.ballOn = 75; g.down = 1; g.toGo = 10;
     g.phase = "break"; g.t = mode === "body" ? 20 : 5; updateBoard(); return true; }
   banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); g.phase = "break"; g.t = 3; updateBoard(); return true;
 }
@@ -1510,6 +1629,7 @@ function endGame(){
   $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
   $("endScreen").hidden = false;
   say(win ? "Homecoming win! Mustangs take it." : "Final score.", true);
+  announce(win ? "win" : "loss", {force: true, delay: 0.5});
   if (win) sfx.cheer();
   try{ wakeLock?.release(); }catch(e){}
 }
@@ -1525,7 +1645,7 @@ function update(dt){
     if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
   if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
-  crowdFollow();
+  crowdFollow(); announcerTick();
   if (g.phase === "huddle"){
     const was = g.huddleLen - g.t; g.t -= dt;
     if (was < 3 && g.huddleLen - g.t >= 3){ if (g.huddleLen >= 8 && Math.random() < 0.6) sfx.chant(); else if (Math.random() < 0.4) sfx.drumline(); }
@@ -1542,7 +1662,7 @@ function update(dt){
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
     if (g.t <= 0) afterPlay();
   } else if (g.phase === "opp"){
-    if (g.oppShowIn > 0){ g.oppShowIn -= dt; if (g.oppShowIn <= 0){ banner("Raiders ball", g.oppText, 3); say(g.oppText); if (g.oppPts) sfx.groan(); else sfx.cheer(); } }
+    if (g.oppShowIn > 0){ g.oppShowIn -= dt; if (g.oppShowIn <= 0){ banner("Raiders ball", g.oppText, 3); say(g.oppText); if (g.oppPts){ sfx.groan(); announce("oppScore", {chance: 0.6, delay: 0.5}); } else sfx.cheer(); } }
     g.t -= dt;
     if (g.t <= 0 && bannerT <= 0.2){ if (!clockCheck()) startHuddle(true); }
   } else if (g.phase === "break"){
