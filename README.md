@@ -1,6 +1,6 @@
 # Homecoming Hero
 
-A first-person running back game you play with your body. Prop a phone or tablet in front of you, take the handoff, and sprint, juke, truck, and stiff arm your way through a four-quarter homecoming game. On 3rd and long, you stay in to pick up the blitz.
+A first-person running back game you play with your body. Prop a phone or tablet in front of you, take the handoff, and sprint, juke, truck, and stiff arm your way through a four-quarter homecoming game. On 3rd and long, you stay in to pick up the blitz or run a route out of the backfield.
 
 Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that https link. Touch play works anywhere.
 
@@ -15,8 +15,15 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Pass pro: shuffle | Hop toward the blitzer | Swipe toward him |
 | Pass pro: stance | Hold a quarter squat | Hold a thumb down |
 | Pass pro: punch | Both hands out together | Tap |
+| Route: run it | High knees | Tap fast |
+| Route: break | Hop toward the break when it beeps at the cone | Swipe toward the break |
+| Route: catch | Both hands out as the ring closes | Swipe up |
+
+On 3rd and 5 or more, the call is either pass pro or a route.
 
 Pass pro read: before the snap, the real blitzer creeps closer and sinks lower. The other one bounces in place, then drops into coverage.
+
+Routes: the route is drawn on the grass before the snap, with an orange cone at the break. A linebacker covers you. Break on time and he bites, which opens space for the catch. The ball's whoosh rises to its peak right as it arrives, so you can time your hands by ear. After the catch it's a normal run.
 
 ## Camera setups
 

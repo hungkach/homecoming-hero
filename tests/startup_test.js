@@ -1,9 +1,10 @@
 // End-to-end body session with a simulated player.
-// Usage: node tests/startup_test.js index.html [modeKey] [distanceMeters] [extraDelaySec] [pass]
+// Usage: node tests/startup_test.js index.html [modeKey] [distanceMeters] [extraDelaySec] [pass|route]
 const fs = require("fs"), vm = require("vm");
 const html = fs.readFileSync(process.argv[2], "utf8");
-const KEY = process.argv[3] || "tablet_horizontal", D = +(process.argv[4] || 2.3), EXTRA = +(process.argv[5] || 0), PASS = process.argv[6] === "pass";
+const KEY = process.argv[3] || "tablet_horizontal", D = +(process.argv[4] || 2.3), EXTRA = +(process.argv[5] || 0), PASS = process.argv[6] === "pass", ROUTE = process.argv[6] === "route";
 if (PASS) globalThis.__hhForcePass = true;
+if (ROUTE) globalThis.__hhForceRoute = true;
 const noop = new Proxy(function(){}, {get: (t, k) => k === Symbol.toPrimitive ? () => 0 : noop, apply: () => noop, set: () => true});
 const ctx = new Proxy({}, {get: (t, k) => (k in t ? t[k] : (typeof k === "string" ? (() => noop) : undefined)), set: (t, k, v) => { t[k] = v; return true; }});
 const els = {};
@@ -67,6 +68,16 @@ function director(t){
     if (S.phase === "latIntro") guard(P);
     if (S.phase === "latency"){ guard(P);
       for (let i = 4; i < 8; i++){ const u = t - (S.beats[i] + EXTRA + 0.02); if (u > -0.05 && u < 0.6){ punch(P, ease(u/0.12)*(u < 0.35 ? 1 : 1 - ease((u - 0.35)/0.2))); } } }
+  } else if (HH.game && HH.game.playType === "route"){
+    // route: high knees, hop toward the break when the cue shows, both hands out as the ring closes (all seen EXTRA late)
+    const g = HH.game, rt = g.rt;
+    if (g.phase === "live"){
+      knees(P, t);
+      if (rt.cueAt != null && !rt._cut){ rt._cut = true; hopAt = t + 0.15 + EXTRA; hopDir = g.play.dir; hopFrom = offX; }
+      if (rt.arriveAt != null && !rt._ht){ rt._ht = rt.arriveAt - 0.1 + EXTRA; }
+      if (rt._ht){ const u = t - rt._ht, k = ease(u/0.12)*(u < 0.4 ? 1 : 1 - ease((u - 0.4)/0.2)); if (u > 0){ punch(P, k); punchL(P, k); } }
+    }
+    const hu = t - hopAt; if (hu > 0 && hu < 0.25) off.x = hopFrom - hopDir*0.38*ease(hu/0.25); else if (hu >= 0.25 && hu < 1.2) off.x = hopFrom - hopDir*0.38*(1 - ease((hu - 0.25)/0.9));
   } else if (HH.game && HH.game.playType === "pass"){
     const g = HH.game, pp = g.pp;
     guard(P);
@@ -106,7 +117,7 @@ function director(t){
     if (i % 2 === 0){ const f = director(t); BodyCore.feed(f.img, f.wld, t, VW, VH); }
     try { rafCb(ms); } catch(e){ errors++; if (errors < 4) console.error("frame error", e.stack.split("\n").slice(0, 3).join(" | ")); }
     if (HH.setup.active && HH.setup.frame && !HH.setup.frame.ok) framingSays.add(HH.setup.frame.code);
-    if (HH.game && (HH.game.stats.carries >= 4 || HH.game.stats.passPro >= 6)) break;
+    if (HH.game && (HH.game.stats.carries >= 4 || HH.game.stats.passPro >= 6 || HH.game.stats.targets >= 5)) break;
   }
   const g = HH.game;
   console.log("mode", KEY, "dist", D, "extra delay", EXTRA, "| errors", errors);
@@ -115,5 +126,5 @@ function director(t){
   console.log("spoken:", spoken.slice(0, 14).join(" | "));
   console.log("final coach line:", els.calibMsg.textContent);
   console.log("latency set to", Math.round(BodyCore.latency*1000), "ms");
-  if (g) console.log("game:", JSON.stringify({carries: g.stats.carries, yards: g.stats.yards, steps: g.stats.steps, jukes: g.stats.jukes, broken: g.stats.broken, passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks}));
+  if (g) console.log("game:", JSON.stringify({carries: g.stats.carries, yards: g.stats.yards, steps: g.stats.steps, jukes: g.stats.jukes, broken: g.stats.broken, passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks, targets: g.stats.targets, catches: g.stats.catches, recYards: g.stats.recYards}));
 })();

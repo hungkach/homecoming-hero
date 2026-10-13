@@ -28,13 +28,16 @@ node tests/core_test.js index.html 1.5 0       # synthetic body through the core
 node tests/camera_test.js index.html           # living room fallback chain and auto-pick
 node tests/full_game.js index.html good        # full touch game with an autopilot (also: lazy)
 node tests/pass_test.js index.html good        # forced pass plays (also: nopunch, nostance, lazy)
-node tests/startup_test.js index.html living_room 2.3 0.3   # setup, move test, latency, play; add "pass" for pass pro
+node tests/route_test.js index.html good       # forced route plays (also: nobreak, wrongway, nohands, lazy)
+node tests/startup_test.js index.html living_room 2.3 0.3   # setup, move test, latency, play; add "pass" for pass pro or "route" for routes
 ```
 
 These are simulations. They prove the logic, not how real tracking feels. Thresholds get tuned from Mark's playtest notes.
 
 ## Status
 
-Done: body core v0.1, six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection on 3rd and long.
+Done: body core v0.1, six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd and band, best-voice picker, iOS playback audio session.
+
+The 3D view and the crowd can't be checked by the Node tests. Check them in Chromium with Playwright (pre-installed in cloud sessions), serving three.js from npm because the CDN may be blocked there.
 
 Next: Mark's real-device playtests on iPhone, iPad, and living room mode with screen mirroring. Expect threshold tuning first. Gameplay balance (jukes score too easily) comes later, on purpose.

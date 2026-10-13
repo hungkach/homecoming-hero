@@ -56,7 +56,7 @@ const HH = window.__hh;
   }
   const g = HH.game;
   console.log("skill", skill, "errors", errors, "sim minutes", (ms/60000).toFixed(1), "phase", g.phase);
-  console.log("final", els.endTitle.textContent, "|", els.endSub.textContent);
+  console.log("final", (els.endTitle||{}).textContent, "|", (els.endSub||{}).textContent);
   console.log("plays", plays.join(" "));
   console.log("stats", JSON.stringify(g.stats));
   console.log("pass plays", JSON.stringify({passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks}));

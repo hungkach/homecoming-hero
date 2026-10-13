@@ -649,6 +649,13 @@ const PLAYS = [
   {name:"Toss sweep left", hole:-7, say:"Toss sweep left. Get to the edge."}
 ];
 // 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, punch on contact, anchor.
+// 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, hands out for the catch.
+const ROUTE_PLAYS = [
+  {name: "Angle route right", route: true, dir: 1, lane: -1.5, stem: 4, hole: 99, say: "Angle route right. Sprint to the cone, then break right."},
+  {name: "Angle route left", route: true, dir: -1, lane: 1.5, stem: 4, hole: 99, say: "Angle route left. Sprint to the cone, then break left."},
+  {name: "Flat route right", route: true, dir: 1, lane: 2.5, stem: 1.5, hole: 99, say: "Flat route right. Break right at the cone."},
+  {name: "Flat route left", route: true, dir: -1, lane: -2.5, stem: 1.5, hole: 99, say: "Flat route left. Break left at the cone."}
+];
 const PASS_PLAYS = [
   {name: "Max protect", hole: 99, pass: true, say: "Pass protection. Find the blitzer."},
   {name: "Scat protection", hole: 99, pass: true, say: "Pass pro. Pick up the blitz."}
@@ -802,6 +809,10 @@ const sfx = {
   // between plays the student section starts a chant: drum, drum, then claps
   chant(){ if (!AC) return; crowd(0.1, 3.4);
     for (let r = 0; r < 2; r++){ const o = r*1.6; drum(o, 0.4); drum(o + 0.3, 0.4); clap(o + 0.6); clap(o + 0.8); clap(o + 1.0); } },
+  // the break: two sharp beeps from the side you cut to
+  breakCue(side){ tone(1400, 1400, 0.07, 0.25, "square", 0, side*0.8); tone(1800, 1800, 0.09, 0.25, "square", 0.1, side*0.8); },
+  // ball in the air: a rising whoosh that peaks right as it arrives, so you can catch by ear
+  incoming(dur){ tone(260, 1100, dur, 0.14, "triangle"); noise(dur, 1800, 0.12, "bandpass"); },
   drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
 // voice: the device's best English voice unless one was picked. Premium and Enhanced voices are
@@ -853,6 +864,12 @@ function endPointer(e){
   if (e.type === "pointercancel") return;
   const dx = e.clientX - q.x, dy = e.clientY - q.y, dist = Math.hypot(dx, dy), held = now() - q.t;
   if (mode === "body"){ if (game && game.phase !== "over") pause(); return; }
+  if (game && game.playType === "route"){   // tap to run, swipe toward the break, swipe up to catch
+    if (dist < 28){ addStep(now()); return; }
+    if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
+    else if (dy < 0){ input.punch = true; input.punchT = now(); }
+    return;
+  }
   if (game && game.playType === "pass"){
     if (dist < 28){ if (held < 0.3){ input.punch = true; input.punchT = now(); } return; }   // a long hold was the stance
     if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
@@ -868,6 +885,7 @@ cv.addEventListener("pointercancel", endPointer);
 function touchStanceHeld(){ const t = now(); for (const q of pointers.values()) if (!q.moved && t - q.t > 0.15) return true; return false; }
 window.addEventListener("keydown", e => {
   if (!game || mode !== "touch") return;
+  if (game.playType === "route" && e.code === "ArrowUp"){ input.punch = true; input.punchT = now(); return; }
   if (game.playType === "pass"){
     if (e.code === "Space"){ input.punch = true; input.punchT = now(); e.preventDefault(); return; }
     if (e.code === "ArrowDown"){ input.keyStance = true; e.preventDefault(); return; }
@@ -1004,7 +1022,7 @@ function pumpBody(){
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }
     else if (e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }
     else if (e.type === "punch"){
-      if (game.playType === "pass"){   // pass pro punch is both hands together
+      if (game.playType === "pass" || game.playType === "route"){   // pass pro punch and the catch are both hands together
         handPunch[e.side] = e.tEff;
         if (Math.abs(handPunch.L - handPunch.R) < 0.3){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
       } else { input.stiff = true; input.stiffT = e.tEff; }
@@ -1019,7 +1037,7 @@ function newGame(){
   game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, home:0, away:0, down:1, toGo:10, ballOn:75,
     play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
     p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
-    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0},
+    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0},
     flash:0, shake:0};
   startHuddle(true);
 }
@@ -1040,8 +1058,11 @@ function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; }
 function startHuddle(newDrive){
   const g = game;
   g.phase = "huddle"; g.t = g.huddleLen = mode === "body" ? 11 : 6;
-  g.playType = (g.down === 3 && g.toGo >= 5 && Math.random() < 0.67) || window.__hhForcePass ? "pass" : "run";   // __hhForcePass: test switch
-  g.play = g.playType === "pass" ? PASS_PLAYS[Math.floor(Math.random()*PASS_PLAYS.length)] : PLAYS[Math.floor(Math.random()*PLAYS.length)];
+  const passDown = g.down === 3 && g.toGo >= 5 && Math.random() < 0.67;
+  g.playType = window.__hhForcePass ? "pass" : window.__hhForceRoute ? "route" : passDown ? (Math.random() < 0.5 ? "pass" : "route") : "run";   // test switches
+  const pick = L => L[Math.floor(Math.random()*L.length)];
+  g.play = pick(g.playType === "pass" ? PASS_PLAYS : g.playType === "route" ? ROUTE_PLAYS : PLAYS);
+  g.caught = false; g.rt = null;
   if (g.playType === "run" && g.ballOn <= 3 && Math.abs(g.play.hole) > 5) g.play = PLAYS[2];
   g.pp = null; g.ball = null;
   g.p = {x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0};
@@ -1049,10 +1070,16 @@ function startHuddle(newDrive){
   g.p.x = Math.abs(g.play.hole) > 3 && !g.play.pass ? clamp(g.play.hole*0.45, -3.2, 3.2) : 0;   // the handoff angle points you at the hole
   spawnDefense();
   if (g.playType === "pass") setupPassPro();
+  if (g.playType === "route") setupRoute();
   updateBoard();
   banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
   say(g.play.say);
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
+  if (g.playType === "route" && !g.seenRoute){
+    g.seenRoute = true;
+    hint(mode === "touch" ? "Tap fast to run your route · swipe toward the break at the cone · swipe up to catch"
+                          : "High knees to the cone, hop toward the break, then both hands out as the ball arrives.");
+  }
   if (g.playType === "pass" && !g.seenPass){
     g.seenPass = true;
     hint(mode === "touch" ? "Swipe toward the blitzer · hold a thumb down to sit in your stance · tap to punch as he arrives"
@@ -1091,10 +1118,11 @@ function endPlay(kind, extra){
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
   const gain = kind === "td" ? g.ballOn : Math.min(Math.round(p.z), g.ballOn - 1);   // short of the goal line stays short
   g.result = {kind, gain};
-  g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain);
+  if (g.caught){ g.stats.catches++; g.stats.recYards += gain; }
+  else { g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain); }
   if (kind === "td"){
     g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
-    banner("Touchdown!", `${gain} yard run. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
+    banner("Touchdown!", `${gain} yard ${g.caught ? "catch and run" : "run"}. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
     return;
   }
   const label = kind === "out" ? "Out of bounds" : kind === "stuffed" ? "Stuffed at the line" : extra || "Tackled";
@@ -1143,7 +1171,7 @@ function updateLive(dt, t){
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
   // drift toward the called hole before the line, like following your blockers
-  if (p.z < 0 && t - p.lastJuke > 0.4) p.x += clamp(g.play.hole - p.x, -1, 1)*dt*3.2;
+  if (p.z < 0 && !g.caught && t - p.lastJuke > 0.4) p.x += clamp(g.play.hole - p.x, -1, 1)*dt*3.2;
   const prevZ = p.z;
   p.z += p.speed*dt;
   p.xHist.push({t, x:p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
@@ -1186,6 +1214,94 @@ function updateLive(dt, t){
   if (p.z >= g.ballOn){ p.z = g.ballOn; endPlay("td"); return; }
   if (Math.abs(p.x) > FH){ endPlay("out"); return; }
   if (p.stall > 3.5){ sfx.hit(); endPlay("tackle", "Hit in the backfield. Keep those knees moving."); }
+}
+
+/* ============ route running ============ */
+// The middle linebacker covers you. Sprint to the cone, hop toward the break when it beeps, and he bites.
+// The ball is in the air as the ring closes; both hands out on arrival. A catch turns into a normal run.
+const THROW_FLIGHT = 0.85;
+function setupRoute(){
+  const g = game, pl = g.play;
+  g.p.x = 0; g.p.z = -5;
+  const lbs = g.defenders.filter(d => d.type === "LB").sort((a, b) => Math.abs(a.x) - Math.abs(b.x));
+  const cov = lbs[0]; cov.type = "COV"; cov.x = pl.lane*0.6; cov.z = Math.max(pl.stem + 1.5, 4);
+  g.rt = {cov, liveT: 0, cueAt: null, broke: null, wrong: false, throwAt: null, arriveAt: null, handsT: -9, freezeUntil: 0, coneX: pl.lane, coneZ: pl.stem, done: false};
+}
+function routeBallTarget(){
+  const g = game, p = g.p, pl = g.play;
+  return {x: p.x + pl.dir*1.2, z: p.z + 1.4};
+}
+function updateRoute(dt, t){
+  const g = game, p = g.p, rt = g.rt, pl = g.play, cov = rt.cov, L = LAT(), d = (g.q - 1)/3;
+  g.stats.work += dt; rt.liveT += dt;
+  const sps = stepsPerSec(t);
+  p.speed += clamp(clamp(sps*1.9, 0, 9.3) - p.speed, -5*dt, 6*dt);
+  p.bob += dt*(2 + sps*2.2);
+  // the break: a hop toward the called side near the cone
+  if (input.juke && t - p.lastJuke > 0.4){
+    const jt = input.jukeT ?? t;
+    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = jt; sfx.whoosh();
+    if (rt.broke == null && rt.cueAt != null && jt >= rt.cueAt - 0.3 && jt <= rt.cueAt + 1.0){
+      if (input.juke === pl.dir){ rt.broke = jt; rt.freezeUntil = t + 0.55; }
+      else rt.wrong = true;
+    }
+  }
+  if (input.punch){ rt.handsT = input.punchT ?? t; p.stiffAnim = 1; }
+  input.juke = 0; input.punch = input.shoulder = input.stiff = false; input.jukeT = input.punchT = null;
+  if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1 - u)*(1 - u)); }
+  p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
+  // stem: drift to your release lane; after the break, run across the field
+  if (rt.broke == null){ if (t - p.lastJuke > 0.3) p.x += clamp(rt.coneX - p.x, -1, 1)*dt*3; p.z += p.speed*dt; }
+  else { p.x += pl.dir*Math.min(p.speed, 7)*0.75*dt; p.z += p.speed*0.45*dt; }
+  p.xHist.push({t, x: p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
+  if (rt.cueAt == null && p.z >= rt.coneZ){ rt.cueAt = t; sfx.breakCue(pl.dir); banner(pl.dir > 0 ? "Break right!" : "Break left!", "", 0.8); }
+  // coverage: he trails just inside you; a good break makes him bite and overrun for a moment
+  cov.anim += dt*8;
+  if (t < rt.freezeUntil){ cov.x += cov.vx*dt*0.6; cov.z += cov.vz*dt*0.6; }
+  else {
+    const lx = laggedX(p, 0.3, t), tx = lx - pl.dir*0.3, tz = p.z + 1.0;
+    const dx = tx - cov.x, dz = tz - cov.z, dist = Math.hypot(dx, dz) || 1, sp = Math.min(dist*4, 6.3 + d*0.6);
+    cov.vx = dx/dist*sp; cov.vz = dz/dist*sp; cov.x += cov.vx*dt; cov.z += cov.vz*dt;
+  }
+  // everyone else drops into zones for a beat, then breaks on the ball once it's thrown
+  for (const o of g.defenders){
+    if (o === cov) continue;
+    o.anim += dt*8;
+    if (rt.throwAt != null && t >= rt.throwAt && o.type !== "DL"){
+      const dx = p.x - o.x, dz = p.z + 2 - o.z, dist = Math.hypot(dx, dz) || 1, sp = o.speed;
+      o.vx = dx/dist*sp; o.vz = dz/dist*sp; o.x += o.vx*dt; o.z += o.vz*dt;
+    } else if (rt.liveT < 1.0) o.z += 2*dt;
+  }
+  // the throw: right after your break, or late if you never get there
+  if (rt.throwAt == null && (rt.broke != null || (rt.cueAt != null && t > rt.cueAt + 1.0) || rt.liveT > 4.0)){
+    rt.throwAt = t + 0.15; rt.arriveAt = rt.throwAt + THROW_FLIGHT;
+  }
+  if (rt.throwAt != null && !g.ball && t >= rt.throwAt){
+    const tg = rt.broke != null ? routeBallTarget() : {x: rt.coneX + pl.dir*4, z: rt.coneZ + 1.5};
+    g.ball = {t0: now(), dur: THROW_FLIGHT, x0: 0, z0: -7, x1: tg.x, z1: tg.z, caught: false};
+    sfx.incoming(THROW_FLIGHT);
+  }
+  if (g.ball && rt.broke != null){ const tg = routeBallTarget(); g.ball.x1 = tg.x; g.ball.z1 = tg.z; }   // the ball leads you
+  // the catch call waits out the camera delay
+  if (rt.arriveAt != null && t >= rt.arriveAt + L + 0.15){
+    g.stats.targets++;
+    if (rt.broke == null) return endRoute(rt.wrong ? "You broke the wrong way." : rt.cueAt == null ? "Too slow to the cone." : "You never made your break.");
+    const sep = Math.hypot(cov.x - p.x, cov.z - p.z);
+    const hands = rt.handsT >= rt.arriveAt - 0.4 && rt.handsT <= rt.arriveAt + 0.2;
+    const chance = hands ? (sep > 1.6 ? 0.95 : sep > 0.9 ? 0.75 : 0.4) : (sep > 1.6 ? 0.2 : 0.08);
+    if (Math.random() >= chance) return endRoute(!hands ? "Get your hands out as it arrives." : "Broken up. He was right on you.");
+    // caught: now it's a run
+    g.caught = true; g.ball = null; g.playType = "run"; p.crossedLOS = true; cov.type = "LB"; cov.state = "read";
+    p.speed *= 0.4;   // the catch breaks your stride
+    for (const o of g.defenders) o.delay = Math.min(o.delay, 0.15);   // everyone was already flowing to the ball
+    banner("Caught it!", "Turn it upfield!", 1); say("Caught it!"); sfx.pads(); crowd(0.3, 1);
+  }
+}
+function endRoute(why){
+  const g = game; if (g.phase !== "live") return;
+  g.phase = "dead"; g.t = 2.6; sfx.whistle();
+  g.result = {kind: "incomplete", gain: 0};
+  banner("Incomplete", why, 2.4); sfx.groan();
 }
 
 /* ============ pass protection ============ */
@@ -1333,10 +1449,11 @@ function endGame(){
   $("board").hidden = true; $("banner").hidden = true; $("pauseBtn").hidden = true; hint(null);
   const win = g.home > g.away, tie = g.home === g.away;
   $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
-  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro} plays.`;
+  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro + g.stats.targets} plays.`;
   const s = g.stats, ypc = s.carries ? (s.yards/s.carries).toFixed(1) : "0.0";
   const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs],
-    ["Blitz pickups", `${s.pickups}/${s.passPro}`],["Clean pockets", s.clean],["Sacks allowed", s.sacks]];
+    ["Blitz pickups", `${s.pickups}/${s.passPro}`],["Clean pockets", s.clean],["Sacks allowed", s.sacks],
+    ["Catches", `${s.catches}/${s.targets}`],["Rec yards", s.recYards]];
   $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
   $("endScreen").hidden = false;
   say(win ? "Homecoming win! Mustangs take it." : "Final score.", true);
@@ -1362,11 +1479,11 @@ function update(dt){
     if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
   } else if (g.phase === "cadence"){
     g.t -= dt;
-    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : "Knees up!", 0.7); }
+    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
-    if (g.playType === "pass") updatePass(dt, t); else updateLive(dt, t);
+    if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
   } else if (g.phase === "dead"){
     g.t -= dt;
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
@@ -1547,7 +1664,8 @@ function drawCues(c, t, world2D){
       cx.beginPath(); cx.arc(q.x, q.y, q.s*(1.1 + 2.6*u), 0, 7); cx.stroke(); }
   }
   // hole arrow before the snap (the 3D world draws its own)
-  if (world2D && g.playType !== "pass" && (g.phase === "huddle" || g.phase === "cadence")){
+  if (g.playType === "route") drawRouteCues(c, t, world2D);
+  if (world2D && g.playType === "run" && (g.phase === "huddle" || g.phase === "cadence")){
     const a = proj(c, g.play.hole, 0.05, 1.6), b = proj(c, g.play.hole, 0.05, 4.5);
     if (a && b){
       const pulse = 0.6 + 0.4*Math.sin(t*6);
@@ -1581,8 +1699,57 @@ function drawPassSelf(c, t){
     cx.fillStyle = pp.stanceNow ? "rgba(90,220,120,.95)" : "rgba(255,207,63,.9)"; cx.fillRect(x, top + h*(1 - lvl), 20, h*lvl);
   }
 }
+// route: the path on the grass before the snap, the cone, and a ring that closes as the ball arrives
+function drawRouteCues(c, t, world2D){
+  const g = game, rt = g.rt, pl = g.play; if (!rt) return;
+  const pre = g.phase === "huddle" || g.phase === "cadence";
+  if (pre){
+    const pts = [[0, -4.4], [rt.coneX, rt.coneZ], [rt.coneX + pl.dir*5, rt.coneZ + (pl.lane*pl.dir < 0 ? 2 : 0.6)]].map(([x, z]) => proj(c, x, 0.05, z));
+    if (pts.every(Boolean)){
+      cx.strokeStyle = `rgba(255,207,63,${0.65 + 0.3*Math.sin(t*6)})`; cx.lineWidth = Math.max(4, pts[1].s*0.3); cx.lineJoin = "round"; cx.lineCap = "round";
+      cx.setLineDash([pts[1].s*0.8, pts[1].s*0.5]); cx.beginPath(); cx.moveTo(pts[0].x, pts[0].y); cx.lineTo(pts[1].x, pts[1].y); cx.lineTo(pts[2].x, pts[2].y); cx.stroke(); cx.setLineDash([]);
+      const a = pts[1], b = pts[2], ang = Math.atan2(b.y - a.y, b.x - a.x), hs = Math.max(10, a.s*0.9);
+      cx.fillStyle = cx.strokeStyle; cx.beginPath(); cx.moveTo(b.x + Math.cos(ang)*hs, b.y + Math.sin(ang)*hs);
+      cx.lineTo(b.x + Math.cos(ang + 2.4)*hs, b.y + Math.sin(ang + 2.4)*hs); cx.lineTo(b.x + Math.cos(ang - 2.4)*hs, b.y + Math.sin(ang - 2.4)*hs); cx.closePath(); cx.fill();
+    }
+  }
+  // the cone stays out until you break (the 3D world draws its own)
+  if (world2D && (pre || g.phase === "live") && rt.broke == null){
+    const q = proj(c, rt.coneX, 0, rt.coneZ);
+    if (q){ const h = Math.max(8, q.s*0.7), w = h*0.6; cx.fillStyle = "#ff7a1a"; cx.beginPath(); cx.moveTo(q.x, q.y - h); cx.lineTo(q.x + w/2, q.y); cx.lineTo(q.x - w/2, q.y); cx.closePath(); cx.fill();
+      cx.fillStyle = "rgba(255,255,255,.85)"; cx.fillRect(q.x - w*0.3, q.y - h*0.55, w*0.6, h*0.12); }
+  }
+  // break chevrons toward the called side, like the pass pro counter
+  if (g.phase === "live" && rt.cueAt != null && rt.broke == null && t - rt.cueAt < 1.0){
+    const u = Math.min(W, H), sd = pl.dir, cxp = W/2 + sd*W*0.25, cy = H*0.45, sz = u*0.08, a = 0.6 + 0.4*Math.sin(t*20);
+    cx.fillStyle = `rgba(255,207,63,${a})`;
+    for (let k = 0; k < 3; k++){ const x0 = cxp + sd*k*sz*0.9;
+      cx.beginPath(); cx.moveTo(x0 - sd*sz*0.4, cy - sz); cx.lineTo(x0 + sd*sz*0.5, cy); cx.lineTo(x0 - sd*sz*0.4, cy + sz); cx.lineTo(x0 - sd*sz*0.1, cy); cx.closePath(); cx.fill(); }
+  }
+  // catch ring: closes on the spot in front of you right as the ball gets there
+  if (g.phase === "live" && rt.arriveAt != null && t >= rt.throwAt){
+    const left = rt.arriveAt - t;
+    if (left > -0.15){
+      const u = clamp(left/THROW_FLIGHT, 0, 1), r = Math.min(W, H)*(0.1 + 0.32*u);
+      cx.strokeStyle = left <= 0.15 ? "rgba(90,220,120,.95)" : `rgba(255,207,63,${0.95 - 0.4*u})`; cx.lineWidth = Math.max(5, Math.min(W, H)*0.018);
+      cx.beginPath(); cx.arc(W/2, H*0.52, r, 0, 7); cx.stroke();
+    }
+  }
+}
+// running a route: both arms pump, then reach out together for the catch
+function drawRouteSelf(c, t){
+  const g = game, p = g.p, sp = Math.min(1, p.speed/6), u = Math.min(W, H), ext = p.stiffAnim;
+  for (const sd of [-1, 1]){
+    const pump = Math.sin(p.bob + (sd > 0 ? 0 : Math.PI))*u*0.05*sp*(1 - ext);
+    cx.save(); cx.translate(W/2 + sd*(W*0.24 - ext*W*0.12), H + u*0.06 - pump - ext*H*0.24);
+    cx.rotate(sd*(0.2 - ext*0.25));
+    cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.07, -u*0.12, u*0.14, u*0.24, u*0.04); cx.fill();
+    cx.fillStyle = COL.skin; cx.beginPath(); cx.roundRect(-u*0.06, -u*0.2 - ext*u*0.06, u*0.12, u*0.1 + ext*u*0.06, u*0.03); cx.fill();
+    cx.restore();
+  }
+}
 function drawBall(c, t){
-  const b = game.ball; if (!b) return;
+  const b = game.ball; if (!b || (!b.caught && t - b.t0 > b.dur + 0.25)) return;   // an incomplete pass doesn't hang in the air
   const u = clamp((t - b.t0)/b.dur, 0, 1), z = lerp(b.z0, b.z1, u), x = lerp(b.x0, b.x1, u), y = 2 + Math.sin(u*Math.PI)*(3 + Math.abs(b.z1 - b.z0)*0.25);
   const q = proj(c, x, y, z); if (!q) return;
   cx.save(); cx.translate(q.x, q.y); cx.rotate(-0.5); cx.fillStyle = COL.ball;
@@ -1591,6 +1758,7 @@ function drawBall(c, t){
 function drawSelf(c, t){
   const g = game; if (!g || g.phase === "opp" || g.phase === "break") return;
   if (g.playType === "pass"){ drawPassSelf(c, t); return; }
+  if (g.playType === "route"){ drawRouteSelf(c, t); return; }
   const p = g.p, sp = Math.min(1, p.speed/6), u = Math.min(W, H);
   const bob = Math.sin(p.bob)*u*0.03*sp;
   // carrying arm and ball, bottom right
@@ -1699,7 +1867,7 @@ function render(t){
 // In three.js, z is flipped so the camera looks down -Z.
 const R3 = (() => {
   let T = null, renderer = null, scene = null, cam = null, el = null, built = false, failed = false, on = false;
-  let venue, field, fieldTex, losLine, fdLine, arrow, ballMesh, crowdMats = [], figs = [], numMats = new Map();
+  let venue, field, fieldTex, losLine, fdLine, arrow, ballMesh, cone, crowdMats = [], figs = [], numMats = new Map();
   let board, boardCtx, boardTex, boardKey = "", fw = null, lastFlash = 0, pr = 1.5, lowFor = 0;
   const M = {}, G = {};
   const force2D = typeof location !== "undefined" && /[?&]2d\b/.test(location.search || "");
@@ -1733,7 +1901,7 @@ const R3 = (() => {
     const back = new T.DirectionalLight(0xbfd0ff, 0.8); back.position.set(30, 40, -60); scene.add(back);
     venue = new T.Group(); scene.add(venue);
     buildField(); buildStands(); buildLights(); buildBoard(); buildPosts();
-    buildMaterials(); buildArrow(); buildBall(); buildFireworks();
+    buildMaterials(); buildArrow(); buildBall(); buildCone(); buildFireworks();
     for (let i = 0; i < 22; i++) figs.push(makeFig());
     info.pr = pr;
   }
@@ -1997,6 +2165,13 @@ const R3 = (() => {
     arrow = new T.Mesh(new T.ShapeGeometry(s), new T.MeshBasicMaterial({color: 0xffcf3f, transparent: true, opacity: 0.8, depthWrite: false}));
     arrow.rotation.x = -Math.PI/2; arrow.position.y = 0.04; arrow.renderOrder = 2; scene.add(arrow);
   }
+  function buildCone(){
+    cone = new T.Group();
+    const c = new T.Mesh(new T.ConeGeometry(0.22, 0.7, 14), lam(0xff7a1a)); c.position.y = 0.35;
+    const band = new T.Mesh(new T.CylinderGeometry(0.125, 0.15, 0.1, 14), lam(0xffffff)); band.position.y = 0.4;
+    const base = new T.Mesh(new T.BoxGeometry(0.5, 0.04, 0.5), lam(0xff7a1a)); base.position.y = 0.02;
+    cone.add(c, band, base); cone.visible = false; scene.add(cone);
+  }
   function buildBall(){
     ballMesh = new T.Mesh(new T.SphereGeometry(0.2, 12, 8), lam(0x7a3f1d)); ballMesh.scale.set(1, 0.6, 0.6); ballMesh.visible = false; scene.add(ballMesh);
   }
@@ -2045,6 +2220,9 @@ const R3 = (() => {
     losLine.visible = !!showLines; losLine.position.set(0, 0.02, 0);
     fdLine.visible = !!(showLines && g.toGo < g.ballOn); if (g) fdLine.position.set(0, 0.025, -g.toGo);
     arrow.visible = !!(g && g.playType === "run" && (g.phase === "huddle" || g.phase === "cadence"));
+    const rt = g && g.playType === "route" ? g.rt : null;
+    cone.visible = !!(rt && rt.broke == null && (g.phase === "huddle" || g.phase === "cadence" || g.phase === "live"));
+    if (cone.visible) cone.position.set(rt.coneX, 0, -rt.coneZ);
     if (arrow.visible){ arrow.position.set(g.play.hole, 0.04, -1.6); arrow.material.opacity = 0.55 + 0.4*Math.sin(t*6); }
     // crowd
     const hype = g ? (g.flash > 0 ? 1 : g.phase === "live" && g.playType !== "pass" && g.p.z > 8 && g.p.speed > 6.5 ? 0.45 : g.phase === "cadence" ? 0 : 0.08) : 0.05;
@@ -2054,7 +2232,7 @@ const R3 = (() => {
     drawBoard();
     placePlayers(t);
     // ball in the air
-    const b = g && g.ball;
+    const b = g && g.ball && (g.ball.caught || t - g.ball.t0 <= g.ball.dur + 0.25) ? g.ball : null;
     ballMesh.visible = !!b;
     if (b){ const u = clamp((t - b.t0)/b.dur, 0, 1), z = lerp(b.z0, b.z1, u), x = lerp(b.x0, b.x1, u), y = 2 + Math.sin(u*Math.PI)*(3 + Math.abs(b.z1 - b.z0)*0.25);
       ballMesh.position.set(x, y, -z); ballMesh.rotation.set(0, Math.atan2(b.x1 - b.x0, -(b.z1 - b.z0)) + Math.PI/2, t*14); }
