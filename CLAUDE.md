@@ -37,7 +37,7 @@ These are simulations. They prove the logic, not how real tracking feels. Thresh
 
 ## Status
 
-Done: body core v0.3 (arm raise, duck, jump, lateral bound and back), six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd and band, best-voice picker, announcer booth (after dark by default, family, or off; it gets the gaps between calls and the snap count waits for it), iOS playback audio session.
+Done: body core v0.3 (arm raise, duck, jump, lateral bound and back), six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd and band, best-voice picker, situational play calls and defensive fronts, 4th down punts and field goals, announcer booth (after dark by default, family, or off; it gets the gaps between calls and the snap count waits for it), iOS playback audio session.
 
 The 3D view and the crowd can't be checked by the Node tests. Check them in Chromium with Playwright (pre-installed in cloud sessions), serving three.js from npm because the CDN may be blocked there.
 

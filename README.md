@@ -20,7 +20,7 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Route: break | Bound toward the break when it beeps at the cone | Swipe toward the break |
 | Route: catch | Jump (or both arms up) as the ring closes | Swipe up |
 
-On 3rd and 5 or more, the call is either pass pro or a route.
+Play calls follow the situation: power and the dive in short yardage and at the goal line, tosses on long yardage, pass pro or a route on 3rd and long, more passing when trailing late, and never the same play twice in a row. On 4th down the coach goes for it on 4th and inches, on short yardage in Raiders territory, or when trailing late; otherwise it's a field goal (50 yards or less) or a punt, and field position changes the Raiders' odds. The Raiders' front follows the situation too: goal line (packed in, no one deep), nickel on 3rd and long (light box), cover 2 on 2nd and long, and the occasional run blitz. The play call tells you what they're in.
 
 Pass pro read: before the snap, the real blitzer creeps closer and sinks lower. The other one bounces in place, then drops into coverage.
 

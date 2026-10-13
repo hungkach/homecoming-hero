@@ -878,6 +878,7 @@ const sfx = {
   incoming(dur){ tone(260, 1100, dur, 0.14, "triangle"); noise(dur, 1800, 0.12, "bandpass"); },
   // ball into your gut: a soft leather thump
   handoff(){ tone(170, 80, 0.12, 0.35, "sine"); noise(0.06, 900, 0.18, "bandpass"); },
+  kick(){ tone(140, 60, 0.18, 0.5, "sine"); noise(0.08, 1200, 0.3, "bandpass"); },
   drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
 // voice: the device's best English voice unless one was picked. Premium and Enhanced voices are
@@ -1334,12 +1335,12 @@ function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; }
 function startHuddle(newDrive){
   const g = game;
   g.phase = "huddle"; g.t = g.huddleLen = mode === "body" ? 11 : 6;
-  const passDown = g.down === 3 && g.toGo >= 5 && Math.random() < 0.67;
-  g.playType = window.__hhForcePass ? "pass" : window.__hhForceRoute ? "route" : passDown ? (Math.random() < 0.5 ? "pass" : "route") : "run";   // test switches
-  const pick = L => L[Math.floor(Math.random()*L.length)];
-  g.play = pick(g.playType === "pass" ? PASS_PLAYS : g.playType === "route" ? ROUTE_PLAYS : PLAYS);
+  // 4th down: the coach decides between going for it, a field goal, and a punt
+  if (g.down === 4 && !window.__hhForcePass && !window.__hhForceRoute){ const k = fourthDown(); if (k !== "go"){ specialTeams(k); return; } }
+  const call = callPlay();
+  g.playType = call.type; g.play = call.play; g.lastPlay = g.play.name;
+  g.front = pickFront();
   g.caught = false; g.rt = null;
-  if (g.playType === "run" && g.ballOn <= 3 && Math.abs(g.play.hole) > 5) g.play = PLAYS[2];
   g.pp = null; g.ball = null;
   g.p = {x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0};
   input.steps = []; input.juke = 0; input.shoulder = input.stiff = input.punch = false;
@@ -1351,14 +1352,15 @@ function startHuddle(newDrive){
   if (g.playType === "pass") setupPassPro();
   if (g.playType === "route") setupRoute();
   updateBoard();
-  if (g.playType === "run") banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
+  const tip = FRONT_TIP[g.front];
+  if (g.playType === "run") banner(g.play.name, tip || (newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath."), 2.5);
   else playCard();
-  say(g.play.say, true);
+  say(g.play.say + (tip && g.playType === "run" ? " " + tip : ""), true);
   if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0){
     // the welcome gets its own time: the first huddle stretches to fit it after the play call
     if (announce("open", {force: true, delay: 0.2})){ const x = speechSecs(annQ[annQ.length - 1].text) + speechSecs(g.play.say); g.t = g.huddleLen = Math.max(g.huddleLen, x + 1); annQ[annQ.length - 1].until += x; }
   }
-  else if (g.down === 3 && g.toGo >= 5) announce("third", {chance: 0.6, delay: 0.2});
+  else if (g.down >= 3 && g.toGo >= 5) announce("third", {chance: 0.6, delay: 0.2});
   else announce("huddle", {chance: 0.3, delay: 0.2});
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
 }
@@ -1372,6 +1374,70 @@ function playCard(){
   $("pcName").textContent = g.play.name;
   $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");
   $("playCard").hidden = false;
+}
+/* ---------- the coaches ----------
+   Offense: the call depends on down, distance, field position, and the score late in the game.
+   Defense: the front does too, and each front plays differently (see spawnDefense). */
+const pickW = list => { let r = Math.random()*list.reduce((a, x) => a + x[1], 0); for (const [v, w] of list){ if ((r -= w) <= 0) return v; } return list[0][0]; };
+const RUNS = Object.fromEntries(PLAYS.map(p => [p.name, p]));
+function callPlay(){
+  const g = game;
+  if (window.__hhForcePass) return {type: "pass", play: PASS_PLAYS[Math.floor(Math.random()*PASS_PLAYS.length)]};   // test switches
+  if (window.__hhForceRoute) return {type: "route", play: ROUTE_PLAYS[Math.floor(Math.random()*ROUTE_PLAYS.length)]};
+  const togo = Math.min(g.toGo, g.ballOn), goal = g.ballOn <= 5, short = togo <= 2, long = togo >= 7;
+  const trailingLate = g.q === 4 && g.clock < 150 && g.home < g.away;
+  // pass or run
+  let pPass = 0;
+  if (g.down >= 3 && togo >= 5) pPass = 0.75;
+  else if (g.down === 3 && togo >= 3) pPass = 0.35;
+  else if (g.down === 2 && long) pPass = 0.3;
+  else if (g.down === 1) pPass = 0.08;
+  if (trailingLate && !short) pPass = Math.max(pPass, 0.6);
+  if (goal || short) pPass = Math.min(pPass, 0.1);
+  if (Math.random() < pPass){
+    const type = togo >= 7 && Math.random() < 0.5 ? "pass" : Math.random() < 0.5 ? "pass" : "route";
+    const L = type === "pass" ? PASS_PLAYS : ROUTE_PLAYS;
+    return {type, play: L[Math.floor(Math.random()*L.length)]};
+  }
+  // runs: power and the dive in short yardage and at the goal line, the toss to get outside on long yardage
+  let w;
+  if (goal || short) w = [["Dive", 3], ["Power right", 2], ["Power left", 2], ["Inside zone right", 1], ["Inside zone left", 1]];
+  else if (long) w = [["Toss sweep right", 2], ["Toss sweep left", 2], ["Inside zone right", 2], ["Inside zone left", 2], ["Power right", 1], ["Power left", 1], ["Dive", 0.5]];
+  else w = [["Inside zone right", 2], ["Inside zone left", 2], ["Power right", 1.5], ["Power left", 1.5], ["Toss sweep right", 1], ["Toss sweep left", 1], ["Dive", 1]];
+  w = w.filter(([n]) => n !== g.lastPlay);   // don't run the same play twice in a row
+  return {type: "run", play: RUNS[pickW(w)]};
+}
+function pickFront(){
+  const g = game, togo = Math.min(g.toGo, g.ballOn);
+  if (g.ballOn <= 5 || (togo <= 1 && g.down >= 3)) return "goal line";
+  if (g.down >= 3 && togo >= 7) return "nickel";
+  if (g.down === 2 && togo >= 7) return "cover 2";
+  if (g.down <= 2 && togo >= 3 && Math.random() < 0.2) return "run blitz";
+  return "base";
+}
+const FRONT_TIP = {"goal line": "They're stacked in tight. Pad level low.", nickel: "They're in nickel. Light box.", "cover 2": "Two deep safeties.", "run blitz": "Watch the blitz!"};
+// 4th down: go for it on 4th and inches, on short yardage in their end, or when trailing late; otherwise kick
+function fourthDown(){
+  const g = game, togo = Math.min(g.toGo, g.ballOn), late = g.q === 4 && g.clock < 240;
+  if (late && g.home < g.away) return g.away - g.home <= 3 && g.ballOn <= 30 ? "fg" : "go";
+  if (togo <= 1 && g.ballOn <= 70) return "go";
+  if (togo <= 2 && g.ballOn <= 45) return "go";
+  if (g.ballOn <= 33) return "fg";            // a kick of 50 yards or less
+  return "punt";
+}
+// field goals and punts play out on their own, then the Raiders get the ball
+function specialTeams(kind){
+  const g = game;
+  if (kind === "fg"){
+    const dist = g.ballOn + 17, make = dist <= 30 ? 0.95 : dist <= 40 ? 0.85 : dist <= 45 ? 0.75 : 0.6;
+    const good = Math.random() < make;
+    if (good){ g.home += 3; }
+    startOpponent(false, {big: good ? "It's good!" : "No good", small: good ? `${dist} yard field goal. Mustangs ${g.home}, Raiders ${g.away}.` : `${dist} yard try is wide.`,
+      say: good ? "The kick is good!" : "No good.", good, kick: true, intro: `Field goal try from ${dist}.`, oppFrom: good ? 75 : Math.min(80, 100 - (g.ballOn + 7))});
+    return;
+  }
+  const net = Math.round(rand(36, 46)), spot = g.ballOn - net, touchback = spot <= 0, oppFrom = touchback ? 80 : 100 - spot;
+  startOpponent(false, {big: "Punt", small: touchback ? "Into the end zone. Touchback." : `Downed at the Raiders ${spot}.`, say: "Punt.", kick: true, intro: "Fourth down. Punt team.", oppFrom});
 }
 function spawnDefense(){
   const g = game, d = (g.q - 1)/3;
@@ -1390,6 +1456,22 @@ function spawnDefense(){
   // The one closest to the hole sheds last, so the hole is real.
   const lbs = D.filter(x => x.type === "LB").sort((a, b) => Math.abs(a.x - g.play.hole) - Math.abs(b.x - g.play.hole));
   lbs.forEach((x, i) => x.blockedUntil = (i === 0 ? rand(1.0, 1.5) : rand(0.6, 1.1)) - d*0.25);
+  const front = g.front || "base", dbs = D.filter(x => x.type === "DB");
+  if (front === "goal line"){
+    // everyone packed in close: the line sheds sooner, linebackers fill fast, but there's no one deep
+    D[0].delay -= 0.8;
+    for (const x of lbs){ x.z = rand(3, 4); x.blockedUntil -= 0.35; }
+    dbs.forEach((x, i) => { x.z = rand(5, 7.5); x.x = [-6, 6, -11, 11][i]; });
+  } else if (front === "nickel"){
+    // a light box: one linebacker comes off for a fifth defensive back, everyone plays deep
+    const out = lbs[lbs.length - 1]; out.type = "DB"; out.speed += 1.2; out.z = rand(8, 10); out.blockedUntil = 0;
+    for (const x of dbs.slice(0, 2)) x.z = rand(14, 17);
+  } else if (front === "cover 2"){
+    dbs.slice(0, 2).forEach((x, i) => { x.z = rand(14, 16); x.x = i ? rand(9, 12) : -rand(9, 12); });
+  } else if (front === "run blitz"){
+    // one linebacker shoots a gap at the snap: nobody blocks him, but if you hit the other gap he's out of the play
+    const b = lbs[Math.floor(Math.random()*lbs.length)]; b.blockedUntil = 0; b.delay = 0; b.z = 3; b.speed += 0.6;
+  }
   // goal line: defenders can't line up past the end zone
   for (const x of D) x.z = Math.min(x.z, g.ballOn + 2);
   g.defenders = D;
@@ -1850,15 +1932,21 @@ function clockCheck(){
     g.phase = "break"; g.t = mode === "body" ? 20 : 5; updateBoard(); return true; }
   banner(`End of the ${ord(g.q - 1)}`, "Teams switch sides.", 2.2); g.phase = "break"; g.t = 3; updateBoard(); return true;
 }
-function startOpponent(afterTD){
-  const g = game, d = (g.q - 1)/3, r = Math.random();
+// lead: a special teams result shown first (a punt or a field goal). oppFrom: yards the Raiders have to go.
+function startOpponent(afterTD, lead){
+  const g = game, d = (g.q - 1)/3, r = Math.random(), from = lead && lead.oppFrom || 75;
+  const field = clamp(1 + (75 - from)/50, 0.5, 1.8);      // a short field makes a Raiders score more likely
   let text, pts = 0;
-  if (r < 0.28 + d*0.1){ pts = 7; text = "Raiders march down and score a touchdown."; }
-  else if (r < 0.5 + d*0.1){ pts = 3; text = "Raiders kick a field goal."; }
+  if (lead){
+    g.phase = "opp"; g.lead = lead; g.leadIn = 1.4;
+    banner(lead.intro, "", 1.4); sfx.whistle();
+  } else g.lead = null;
+  if (r < (0.28 + d*0.1)*field){ pts = 7; text = "Raiders march down and score a touchdown."; }
+  else if (r < (0.5 + d*0.1)*field){ pts = 3; text = "Raiders kick a field goal."; }
   else if (r < 0.7){ text = "Mustangs defense forces a punt."; }
   else { text = "Interception! The Mustangs defense takes it back."; }
   g.away += pts; g.clock -= rand(80, 160);
-  g.phase = "opp"; g.t = 3.4; g.oppText = text; g.oppShowIn = afterTD ? 2.2 : 1.2; g.oppPts = pts;
+  g.phase = "opp"; g.t = lead ? 7.2 : 3.4; g.oppText = text; g.oppShowIn = afterTD ? 2.2 : lead ? 5 : 1.2; g.oppPts = pts;
   g.ballOn = text.startsWith("Interception") ? Math.round(rand(40, 60)) : 75; g.down = 1; g.toGo = 10;
 }
 function endGame(){
@@ -1909,6 +1997,8 @@ function update(dt){
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
     if (g.t <= 0) afterPlay();
   } else if (g.phase === "opp"){
+    if (g.lead && g.leadIn > 0){ g.leadIn -= dt; if (g.leadIn <= 0){ const L = g.lead; sfx.kick(); banner(L.big, L.small, 3); say(L.say, true);
+      if (L.good){ sfx.cheer(); g.flash = 0.6; } else if (L.good === false) sfx.groan(); updateBoard(); } }
     if (g.oppShowIn > 0){ g.oppShowIn -= dt; if (g.oppShowIn <= 0){ banner("Raiders ball", g.oppText, 3); say(g.oppText); if (g.oppPts){ sfx.groan(); announce("oppScore", {chance: 0.6, delay: 0.5}); } else sfx.cheer(); } }
     g.t -= dt;
     if (g.t <= 0 && bannerT <= 0.2){ if (!clockCheck()) startHuddle(true); }
