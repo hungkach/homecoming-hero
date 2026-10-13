@@ -1589,10 +1589,27 @@ function frame(ms){
 let calibrating = false, recentering = false, wakeLock = null;
 function setStatus(text, isErr){ const s = $("status"); s.textContent = text; s.classList.toggle("err", !!isErr); }
 async function keepAwake(){ try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch(e){} }
+// iOS treats web audio as "ambient" by default: the ring/silent switch mutes it on the phone speaker,
+// but not on AirPlay, so sound only played once the TV was connected. Ask for "playback" like a video app.
+let silentEl = null;
+function silentWav(){
+  const n = 800, b = new Uint8Array(44 + n), v = new DataView(b.buffer), w = (o, s) => { for (let i = 0; i < s.length; i++) b[o + i] = s.charCodeAt(i); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, "data"); v.setUint32(40, n, true);
+  b.fill(128, 44); let s = ""; for (const x of b) s += String.fromCharCode(x);
+  return "data:audio/wav;base64," + btoa(s);
+}
 function primeAudio(){
-  if (!AC) initAudio(); else if (AC.state === "suspended") AC.resume();
+  try{ if (navigator.audioSession) navigator.audioSession.type = "playback"; }catch(e){}
+  if (!AC) initAudio(); else if (AC.state !== "running") AC.resume().catch(() => {});
+  try{   // older iOS: a looping silent media element moves the page into the playback category
+    if (!silentEl){ silentEl = document.createElement("audio"); silentEl.src = silentWav(); silentEl.loop = true; silentEl.setAttribute("playsinline", ""); silentEl.setAttribute("x-webkit-airplay", "allow"); }
+    silentEl.play()?.catch?.(() => {});
+  }catch(e){}
   if (window.speechSynthesis){ try{ speechSynthesis.speak(new SpeechSynthesisUtterance("")); }catch(e){} }
 }
+// a phone call, Siri, or an AirPlay route change can suspend the audio context; any touch wakes it back up
+document.addEventListener("pointerdown", () => { if (AC && AC.state !== "running") primeAudio(); }, true);
 async function startTouch(){ primeAudio(); mode = "touch"; keepAwake(); $("startScreen").hidden = true; beginGame(); }
 let camMode = null, screenChoice = "device";
 function resolveMode(){
