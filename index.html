@@ -107,6 +107,10 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     </dl>
     <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
+    <label class="pick" for="voiceSel" id="voicePick" hidden>Voice
+      <select id="voiceSel"></select>
+    </label>
+    <p class="note" id="voiceTip" hidden>For a more natural voice on iPhone or iPad, download an Enhanced or Premium English voice in Settings, Accessibility, Spoken Content, Voices. Then reload the game.</p>
     <div class="status" id="status"></div>
     <div class="btns">
       <button id="touchBtn" type="button">Play with touch</button>
@@ -798,11 +802,39 @@ const sfx = {
     for (let r = 0; r < 2; r++){ const o = r*1.6; drum(o, 0.4); drum(o + 0.3, 0.4); clap(o + 0.6); clap(o + 0.8); clap(o + 1.0); } },
   drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
-let lastSpoke = 0;
+// voice: the device's best English voice unless one was picked. Premium and Enhanced voices are
+// downloadable on iPhone and sound far more natural than the default.
+const NOVELTY = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/i;
+let voices = [], voice = null;
+function voiceScore(v){
+  let s = 0;
+  if (/premium/i.test(v.name)) s += 40; else if (/enhanced|neural|natural/i.test(v.name)) s += 30; else if (/google/i.test(v.name)) s += 15;
+  if (/^en[-_]US/i.test(v.lang)) s += 6; else if (/^en/i.test(v.lang)) s += 3;
+  if (/samantha|evan|nathan|zoe|ava|tom|aaron|nicky/i.test(v.name)) s += 2;
+  if (v.localService) s += 1;
+  return s;
+}
+function loadVoices(){
+  if (!window.speechSynthesis) return;
+  try{ voices = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang) && !NOVELTY.test(v.name)).sort((a, b) => voiceScore(b) - voiceScore(a)); }catch(e){ voices = []; }
+  let saved = null; try{ saved = localStorage.getItem("hhVoice"); }catch(e){}
+  voice = voices.find(v => v.voiceURI === saved) || voices[0] || null;
+  const sel = $("voiceSel"); if (!sel || !voices.length) return;
+  sel.innerHTML = voices.map(v => `<option value="${v.voiceURI.replace(/"/g, "&quot;")}">${v.name.replace(/</g, "")}</option>`).join("");
+  sel.value = voice ? voice.voiceURI : ""; $("voicePick").hidden = false;
+  $("voiceTip").hidden = voiceScore(voices[0]) >= 30 || !/iPhone|iPad|Macintosh/.test(navigator.userAgent || "");
+}
+if (window.speechSynthesis){ loadVoices(); try{ speechSynthesis.addEventListener("voiceschanged", loadVoices); }catch(e){} }
+let lastSpoke = -9;
 function say(text, force){
   if (!$("voiceOn").checked || !window.speechSynthesis) return;
   const t = now(); if (!force && t - lastSpoke < 1.6) return; lastSpoke = t;
-  try{ speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.12; u.pitch = 0.95; speechSynthesis.speak(u); }catch(e){}
+  try{
+    speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text);
+    if (voice){ u.voice = voice; u.lang = voice.lang; }
+    u.rate = voice && voiceScore(voice) >= 30 ? 1.05 : 1.12; u.pitch = 0.95;   // natural voices already speak briskly
+    speechSynthesis.speak(u);
+  }catch(e){}
 }
 
 /* ============ input: touch / keyboard ============ */
@@ -1744,6 +1776,11 @@ $("setupBack").addEventListener("click", () => { $("setupScreen").hidden = true;
 $("screenDevice").addEventListener("click", () => { screenChoice = "device"; renderSetup(); });
 $("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup(); });
 $("modeSel").addEventListener("change", renderSetup);
+$("voiceSel").addEventListener("change", e => {
+  voice = voices.find(v => v.voiceURI === e.target.value) || voice;
+  try{ localStorage.setItem("hhVoice", voice.voiceURI); }catch(e){}
+  primeAudio(); say("Inside zone right. Hole is right.", true);
+});
 $("calibBack").addEventListener("click", () => {
   setup.active = false; calibrating = false; $("calibScreen").hidden = true; BodyCore.captureStop();
   if (recentering){ recentering = false; paused = false; $("pauseScreen").hidden = false; paused = true; }
