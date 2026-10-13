@@ -77,6 +77,20 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .coachCard{width:min(620px,100%);gap:8px;padding:14px 18px}
 .coachCard h2{font-size:clamp(28px,6vh,60px)}
 .diag{font:500 13px/1.3 var(--cond);color:var(--ink-dim);opacity:.8;font-variant-numeric:tabular-nums}
+/* 3rd down play card: arcade style, shown in the huddle and gone by the snap count */
+.playCard{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + clamp(100px,17vh,140px));transform:translateX(-50%);width:min(760px,calc(100% - 32px));
+  display:grid;justify-items:center;gap:clamp(6px,1.4vh,12px);pointer-events:none;text-align:center}
+.pcTag{font:400 clamp(18px,3.4vh,32px)/1 var(--slab);color:#1a1408;background:var(--gold);padding:6px 16px 8px;border-radius:999px;transform:rotate(-3deg);
+  box-shadow:0 4px 0 #a5841f;animation:pcPop .35s cubic-bezier(.2,1.6,.4,1) both}
+.pcName{font:400 clamp(34px,8.5vh,84px)/1 var(--slab);color:#fff;text-shadow:0 4px 0 var(--away),0 0 24px rgba(0,0,0,.7);text-wrap:balance;animation:pcPop .4s .1s cubic-bezier(.2,1.6,.4,1) both}
+.pcSteps{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(6px,1.4vh,12px);margin:0;padding:0;list-style:none}
+.pcSteps li{display:flex;align-items:center;gap:10px;background:var(--card);border:2px solid var(--gold);border-radius:16px;padding:clamp(6px,1.2vh,10px) 14px clamp(6px,1.2vh,10px) 8px;
+  font:700 clamp(18px,3.3vh,30px)/1.05 var(--cond);text-align:left;color:var(--ink);box-shadow:0 6px 18px rgba(0,0,0,.45);animation:pcPop .4s cubic-bezier(.2,1.6,.4,1) both}
+.pcSteps li b{display:grid;place-items:center;width:clamp(34px,6vh,54px);height:clamp(34px,6vh,54px);border-radius:50%;background:var(--home);color:#fff;font:400 clamp(18px,3.4vh,30px)/1 var(--slab);flex:none}
+.pcSteps li i{font-style:normal;font-size:clamp(22px,4.2vh,38px);line-height:1}
+@keyframes pcPop{from{opacity:0;transform:scale(.4)}to{opacity:1}}
+.pcTag{animation-name:pcTagPop}
+@keyframes pcTagPop{from{opacity:0;transform:rotate(-3deg) scale(.4)}to{opacity:1;transform:rotate(-3deg)}}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -93,6 +107,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   <div class="situation" id="situation">1st &amp; 10 · own <span class="yl">25</span></div>
 </div>
 <div class="banner" id="banner" hidden><div class="big" id="bannerBig"></div><div class="small" id="bannerSmall"></div></div>
+<div class="playCard" id="playCard" hidden><div class="pcTag" id="pcTag"></div><div class="pcName" id="pcName"></div><ol class="pcSteps" id="pcSteps"></ol></div>
 <div class="hint" id="hint" hidden></div>
 <button class="pauseBtn" id="pauseBtn" type="button" aria-label="Pause" hidden>II</button>
 
@@ -1072,19 +1087,21 @@ function startHuddle(newDrive){
   if (g.playType === "pass") setupPassPro();
   if (g.playType === "route") setupRoute();
   updateBoard();
-  banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
+  if (g.playType === "run") banner(g.play.name, newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath.", 2.5);
+  else playCard();
   say(g.play.say);
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
-  if (g.playType === "route" && !g.seenRoute){
-    g.seenRoute = true;
-    hint(mode === "touch" ? "Tap fast to run your route · swipe toward the break at the cone · swipe up to catch"
-                          : "High knees to the cone, hop toward the break, then both hands out as the ball arrives.");
-  }
-  if (g.playType === "pass" && !g.seenPass){
-    g.seenPass = true;
-    hint(mode === "touch" ? "Swipe toward the blitzer · hold a thumb down to sit in your stance · tap to punch as he arrives"
-                          : "The blitzer creeps closer and lower. Shuffle to him, sit in a quarter squat, punch with both hands.");
-  }
+}
+// 3rd and long gets a big card in the huddle: what the play is and the three moves, in order
+function playCard(){
+  const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
+  const steps = g.playType === "route"
+    ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Hop to break"], ["🙌", touch ? "Swipe up to catch" : "Both hands out to catch"]]
+    : [["↔️", touch ? "Swipe toward the blitzer" : "Hop to the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👊", touch ? "Tap to punch" : "Punch with both hands"]];
+  $("pcTag").textContent = `${ord(g.down)} and ${g.toGo >= g.ballOn ? "goal" : g.toGo}`;
+  $("pcName").textContent = g.play.name;
+  $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");
+  $("playCard").hidden = false;
 }
 function spawnDefense(){
   const g = game, d = (g.q - 1)/3;
@@ -1446,7 +1463,7 @@ function startOpponent(afterTD){
 }
 function endGame(){
   const g = game; g.phase = "over"; g.clock = 0; updateBoard();
-  $("board").hidden = true; $("banner").hidden = true; $("pauseBtn").hidden = true; hint(null);
+  $("board").hidden = true; $("banner").hidden = true; $("playCard").hidden = true; $("pauseBtn").hidden = true; hint(null);
   const win = g.home > g.away, tie = g.home === g.away;
   $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
   $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. You worked ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro + g.stats.targets} plays.`;
@@ -1476,7 +1493,7 @@ function update(dt){
   if (g.phase === "huddle"){
     const was = g.huddleLen - g.t; g.t -= dt;
     if (was < 3 && g.huddleLen - g.t >= 3){ if (g.huddleLen >= 8 && Math.random() < 0.6) sfx.chant(); else if (Math.random() < 0.4) sfx.drumline(); }
-    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
+    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; $("playCard").hidden = true; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
   } else if (g.phase === "cadence"){
     g.t -= dt;
     if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
