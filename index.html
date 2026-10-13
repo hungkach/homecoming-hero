@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Homecoming Hero</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js" async></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Barlow+Condensed:wght@500;600;700&display=swap">
 <style>
 /* Layout: one full-screen canvas showing the field from the running back's eyes,
@@ -667,6 +668,7 @@ function resize(){
   cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
   cx.setTransform(DPR,0,0,DPR,0,0);
   makeCrowd();
+  if (typeof R3 !== "undefined") R3.resize();
 }
 window.addEventListener("resize", resize);
 
@@ -1535,14 +1537,17 @@ function drawPlayers(c, t){
   }
   items.sort((a, b) => b.z - a.z);
   for (const it of items) if (it.z > c.z + 0.4) it.draw();
+}
+function drawCues(c, t, world2D){
+  const g = game; if (!g) return;
   // pass pro: a ring that closes on the blitzer right as he arrives, so you can time the punch
   if (g.playType === "pass" && g.phase === "live" && g.pp.rusher.state === "rush" && g.pp.eta < 0.9){
     const r = g.pp.rusher, q = proj(c, r.x, 1.0, r.z);
     if (q){ const u = g.pp.eta/0.9; cx.strokeStyle = `rgba(255,207,63,${0.9 - 0.5*u})`; cx.lineWidth = Math.max(3, q.s*0.12);
       cx.beginPath(); cx.arc(q.x, q.y, q.s*(1.1 + 2.6*u), 0, 7); cx.stroke(); }
   }
-  // hole arrow before the snap
-  if (g.playType !== "pass" && (g.phase === "huddle" || g.phase === "cadence")){
+  // hole arrow before the snap (the 3D world draws its own)
+  if (world2D && g.playType !== "pass" && (g.phase === "huddle" || g.phase === "cadence")){
     const a = proj(c, g.play.hole, 0.05, 1.6), b = proj(c, g.play.hole, 0.05, 4.5);
     if (a && b){
       const pulse = 0.6 + 0.4*Math.sin(t*6);
@@ -1667,19 +1672,432 @@ function drawSetup(t){
   }
 }
 function render(t){
-  if (setup.active){ drawSetup(t); return; }
+  if (setup.active){ R3.hide(); drawSetup(t); return; }
   const c = camState();
+  const in3D = R3.ready();
+  if (in3D){ cx.clearRect(0, 0, W, H); R3.draw(c, t); }
   cx.save();
   if (game && game.shake > 0){ cx.translate(rand(-1,1)*game.shake*12, rand(-1,1)*game.shake*12); }
-  drawStadium(c, t);
-  drawField(c);
-  drawPlayers(c, t);
-  if (game && game.ball) drawBall(c, t);
+  if (!in3D){
+    drawStadium(c, t);
+    drawField(c);
+    drawPlayers(c, t);
+    if (game && game.ball) drawBall(c, t);
+  }
+  drawCues(c, t, !in3D);
   cx.restore();
   drawSelf(c, t);
   if (game && game.flash > 0){ cx.fillStyle = `rgba(255,207,63,${game.flash*0.15})`; cx.fillRect(0, 0, W, H); }
   drawPip();
 }
+
+/* ============ 3D world (three.js) ============ */
+// When three.js loads from the CDN, the stadium, field, and players are drawn in WebGL on a canvas
+// behind the 2D one. The 2D canvas stays on top for your hands, timing rings, and the camera view.
+// Without WebGL (or with ?2d in the link) the 2D canvas draws the whole world as before.
+// Game coordinates are yards: x across the field, z downfield from the line of scrimmage, y up.
+// In three.js, z is flipped so the camera looks down -Z.
+const R3 = (() => {
+  let T = null, renderer = null, scene = null, cam = null, el = null, built = false, failed = false, on = false;
+  let venue, field, fieldTex, losLine, fdLine, arrow, ballMesh, crowdMats = [], figs = [], numMats = new Map();
+  let board, boardCtx, boardTex, boardKey = "", fw = null, lastFlash = 0, pr = 1.5, lowFor = 0;
+  const M = {}, G = {};
+  const force2D = typeof location !== "undefined" && /[?&]2d\b/.test(location.search || "");
+  const info = {mode: "2d", pr: 0, reason: ""};
+
+  function ready(){
+    if (built) return on;
+    if (failed || force2D || !window.THREE) return false;
+    try{ build(); built = on = true; info.mode = "3d"; }
+    catch(e){ failed = true; info.reason = String(e && e.message || e); if (el) el.remove(); }
+    return on;
+  }
+  function off(reason){ on = false; info.mode = "2d"; info.reason = reason; if (el) el.hidden = true; }
+  function canvasTex(c){ const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t; }
+  const lam = (color, o = {}) => new T.MeshLambertMaterial(Object.assign({color}, o));
+
+  function build(){
+    T = window.THREE;
+    el = document.createElement("canvas"); el.id = "world";
+    el.style.cssText = "position:fixed;inset:0;width:100%;height:100%;display:block;pointer-events:none";
+    cv.parentNode.insertBefore(el, cv);
+    renderer = new T.WebGLRenderer({canvas: el, antialias: true, powerPreference: "high-performance"});
+    pr = Math.min(window.devicePixelRatio || 1, 1.75);
+    renderer.setPixelRatio(pr); renderer.setSize(W, H, false);
+    scene = new T.Scene();
+    scene.background = skyTex();
+    scene.fog = new T.Fog(0x16203d, 90, 300);
+    cam = new T.PerspectiveCamera(60, W/H, 0.2, 600);
+    scene.add(new T.HemisphereLight(0xc8d4ff, 0x203a20, 1.5));
+    const sun = new T.DirectionalLight(0xfff2d8, 2.2); sun.position.set(-30, 60, 20); scene.add(sun);
+    const back = new T.DirectionalLight(0xbfd0ff, 0.8); back.position.set(30, 40, -60); scene.add(back);
+    venue = new T.Group(); scene.add(venue);
+    buildField(); buildStands(); buildLights(); buildBoard(); buildPosts();
+    buildMaterials(); buildArrow(); buildBall(); buildFireworks();
+    for (let i = 0; i < 22; i++) figs.push(makeFig());
+    info.pr = pr;
+  }
+
+  /* ---------- sky ---------- */
+  function skyTex(){
+    const c = document.createElement("canvas"); c.width = 16; c.height = 512; const g = c.getContext("2d");
+    const gr = g.createLinearGradient(0, 0, 0, 512);
+    gr.addColorStop(0, "#03050d"); gr.addColorStop(0.55, "#0c1430"); gr.addColorStop(1, "#24305a");
+    g.fillStyle = gr; g.fillRect(0, 0, 16, 512);
+    const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace; return t;
+  }
+
+  /* ---------- field ---------- */
+  const PX = 1024/53.333, FW = 1024, FL = Math.round(120*PX);
+  function drawFieldTex(c){
+    const g = c.getContext("2d"), Y = yd => (120 - yd)*PX, X = x => (x + FH)*PX;
+    for (let k = 0; k < 20; k++){ g.fillStyle = k % 2 ? COL.turfA : COL.turfB; g.fillRect(0, Y(15 + 5*k), FW, 5*PX + 1); }
+    // grass grain so the turf doesn't look like plastic
+    for (let i = 0; i < 26000; i++){ g.fillStyle = Math.random() < 0.5 ? "rgba(0,0,0,.07)" : "rgba(255,255,255,.05)"; g.fillRect(Math.random()*FW, Math.random()*FL, 2, 3); }
+    // end zones: yours (blue) behind you, the Raiders' (red) ahead
+    const ez = (y0, col, word, flip) => {
+      g.fillStyle = col; g.fillRect(0, Y(y0 + 10), FW, 10*PX);
+      g.save(); g.translate(FW/2, Y(y0 + 5)); if (flip) g.rotate(Math.PI);
+      g.fillStyle = "rgba(255,255,255,.92)"; g.font = `400 ${Math.round(6.2*PX)}px "Alfa Slab One", Georgia, serif`; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(word, 0, 0); g.restore();
+    };
+    ez(110, COL.away, "RAIDERS", false); ez(0, COL.home, "MUSTANGS", true);
+    g.strokeStyle = "rgba(255,255,255,.95)";
+    // yard lines, goal lines thicker
+    for (let yd = 10; yd <= 110; yd += 5){ g.lineWidth = yd === 10 || yd === 110 ? 0.22*PX : 0.12*PX; g.beginPath(); g.moveTo(X(-FH), Y(yd)); g.lineTo(X(FH), Y(yd)); g.stroke(); }
+    // hashes and sideline ticks every yard
+    g.lineWidth = 0.1*PX;
+    for (let yd = 11; yd < 110; yd++){ if (yd % 5 === 0) continue;
+      for (const hx of [-3.08, 3.08, -FH + 0.4, FH - 0.4]){ g.beginPath(); g.moveTo(X(hx - 0.33), Y(yd)); g.lineTo(X(hx + 0.33), Y(yd)); g.stroke(); } }
+    // border
+    g.lineWidth = 0.4*PX; g.strokeRect(0.2*PX, 0.2*PX, FW - 0.4*PX, FL - 0.4*PX);
+    // numbers, turned to face each sideline like a real field
+    g.fillStyle = "rgba(255,255,255,.9)"; g.font = `700 ${Math.round(2.0*PX)}px "Barlow Condensed", "Arial Narrow", sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+    for (let yd = 20; yd <= 100; yd += 10){ const n = String(yd <= 60 ? yd - 10 : 110 - yd);
+      for (const sx of [-1, 1]){ g.save(); g.translate(X(sx*(FH - 9)), Y(yd)); g.rotate(sx*Math.PI/2); g.fillText(n.split("").join(" "), 0, 0); g.restore(); } }
+    // midfield logo
+    g.save(); g.translate(FW/2, Y(60));
+    g.fillStyle = COL.gold; g.beginPath(); g.arc(0, 0, 4.2*PX, 0, 7); g.fill();
+    g.fillStyle = COL.home; g.beginPath(); g.arc(0, 0, 3.6*PX, 0, 7); g.fill();
+    g.rotate(Math.PI); g.fillStyle = COL.gold; g.font = `400 ${Math.round(4.6*PX)}px "Alfa Slab One", Georgia, serif`; g.fillText("M", 0, 0.2*PX); g.restore();
+  }
+  function buildField(){
+    const c = document.createElement("canvas"); c.width = FW; c.height = FL; drawFieldTex(c);
+    fieldTex = canvasTex(c);
+    field = new T.Mesh(new T.PlaneGeometry(2*FH, 120), new T.MeshLambertMaterial({map: fieldTex}));
+    field.rotation.x = -Math.PI/2; venue.add(field);
+    try{ document.fonts?.ready.then(() => { drawFieldTex(c); fieldTex.needsUpdate = true; }); }catch(e){}
+    // the field sits in a darker apron, inside a running track
+    const apron = new T.Mesh(new T.PlaneGeometry(2*FH + 12, 136), lam(0x1d4a26)); apron.rotation.x = -Math.PI/2; apron.position.y = -0.03; venue.add(apron);
+    const track = new T.Mesh(new T.PlaneGeometry(2*FH + 26, 160), lam(0x8a3b2a)); track.rotation.x = -Math.PI/2; track.position.y = -0.06; venue.add(track);
+    // TV lines: blue line of scrimmage, gold line to gain
+    const line = col => { const m = new T.Mesh(new T.PlaneGeometry(2*FH, 0.24), new T.MeshBasicMaterial({color: col, transparent: true, opacity: 0.85, depthWrite: false}));
+      m.rotation.x = -Math.PI/2; m.position.y = 0.02; m.renderOrder = 1; scene.add(m); return m; };
+    losLine = line(0x468cff); fdLine = line(0xffcf3f);
+  }
+
+  /* ---------- stands and crowd ---------- */
+  // fans are instanced boxes; the vertex shader bounces them, harder when the crowd is on its feet
+  function crowdMaterial(){
+    const m = new T.MeshLambertMaterial({color: 0xffffff});
+    m.userData.u = {uTime: {value: 0}, uHype: {value: 0}};
+    m.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, m.userData.u);
+      sh.vertexShader = "uniform float uTime; uniform float uHype;\n" + sh.vertexShader.replace("#include <begin_vertex>",
+        `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          float ph = instanceMatrix[3].x*1.7 + instanceMatrix[3].z*0.93 + instanceMatrix[3].y*3.1;
+          float rate = 1.6 + uHype*9.0 + fract(ph)*1.5;
+          transformed.y += abs(sin(uTime*rate + ph))*(0.03 + uHype*0.32)/max(0.4, instanceMatrix[1].y);
+        #endif`);
+    };
+    crowdMats.push(m); return m;
+  }
+  function buildStands(){
+    const concrete = lam(0x2a3044), rail = lam(0x1f5fbf);
+    const seats = [];   // [x, y, z, facing] for each fan
+    const TIERS = 14, TH = 0.75, TD = 1.15;
+    for (const side of [-1, 1]){
+      const x0 = side*(FH + 14);
+      for (let i = 0; i < TIERS; i++){
+        const top = 2.2 + i*TH, x = x0 + side*i*TD;
+        const b = new T.Mesh(new T.BoxGeometry(TD, top, 118), concrete); b.position.set(x, top/2, 0); venue.add(b);
+        for (let z = -57; z <= 57; z += 0.8) if (Math.random() < 0.93) seats.push([x + rand(-0.15, 0.15), top, z + rand(-0.12, 0.12), side]);
+      }
+      const wall = new T.Mesh(new T.BoxGeometry(0.3, 2.2, 118), rail); wall.position.set(x0 - side*0.7, 1.1, 0); venue.add(wall);
+    }
+    // end zone stands under the scoreboard
+    for (let i = 0; i < 10; i++){
+      const top = 2.2 + i*TH, z = -(60 + 14 + i*TD);
+      const b = new T.Mesh(new T.BoxGeometry(60, top, TD), concrete); b.position.set(0, top/2, z); venue.add(b);
+      for (let x = -29; x <= 29; x += 0.8) if (Math.random() < 0.9) seats.push([x + rand(-0.12, 0.12), top, z, 0]);
+    }
+    const n = seats.length, bodyG = new T.BoxGeometry(0.5, 0.75, 0.32), headG = new T.BoxGeometry(0.26, 0.28, 0.26);
+    bodyG.translate(0, 0.375, 0); headG.translate(0, 0.9, 0);
+    const bodies = new T.InstancedMesh(bodyG, crowdMaterial(), n), heads = new T.InstancedMesh(headG, crowdMaterial(), n);
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), e = new T.Euler(), s = new T.Vector3(1, 1, 1), p = new T.Vector3(), c = new T.Color();
+    const shirts = [COL.home, COL.home, COL.home, COL.home, "#e9edf5", "#e9edf5", COL.gold, "#2b3247", "#7d8597", COL.homeDark];
+    const skins = ["#f1c9a5", "#e0ac84", "#c68a5e", "#8f5b39", "#5e3a22"];
+    seats.forEach(([x, y, z, side], i) => {
+      e.set(0, side ? side*Math.PI/2 : 0, 0); q.setFromEuler(e); const k = rand(0.85, 1.15); s.set(k, k, k); p.set(x, y, z);
+      m4.compose(p, q, s); bodies.setMatrixAt(i, m4); heads.setMatrixAt(i, m4);
+      bodies.setColorAt(i, c.set(shirts[Math.floor(Math.random()*shirts.length)])); heads.setColorAt(i, c.set(skins[Math.floor(Math.random()*skins.length)]));
+    });
+    venue.add(bodies, heads);
+  }
+
+  /* ---------- light towers ---------- */
+  function glowTex(){
+    const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d");
+    const gr = g.createRadialGradient(64, 64, 2, 64, 64, 64); gr.addColorStop(0, "rgba(255,250,230,1)"); gr.addColorStop(0.25, "rgba(255,245,215,.45)"); gr.addColorStop(1, "rgba(255,245,215,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return canvasTex(c);
+  }
+  function buildLights(){
+    const pole = lam(0x3a3f4f), bank = new T.MeshBasicMaterial({color: 0xfffbe8}), glow = glowTex();
+    for (const sx of [-1, 1]) for (const z of [-48, 0, 48]){
+      const x = sx*(FH + 36), h = 34;
+      const p = new T.Mesh(new T.CylinderGeometry(0.4, 0.7, h, 8), pole); p.position.set(x, h/2, z); venue.add(p);
+      const b = new T.Mesh(new T.BoxGeometry(1, 3.2, 7), bank); b.position.set(x - sx*0.4, h + 1.4, z); venue.add(b);
+      const sp = new T.Sprite(new T.SpriteMaterial({map: glow, color: 0xfff4d8, transparent: true, depthWrite: false, blending: T.AdditiveBlending, fog: false}));
+      sp.scale.set(26, 26, 1); sp.position.set(x - sx*1.5, h + 1.4, z); venue.add(sp);
+    }
+  }
+
+  /* ---------- scoreboard ---------- */
+  function buildBoard(){
+    const c = document.createElement("canvas"); c.width = 512; c.height = 256; boardCtx = c.getContext("2d");
+    boardTex = canvasTex(c);
+    const frame = new T.Mesh(new T.BoxGeometry(26, 12, 1), lam(0x14182a)); frame.position.set(0, 24, -88); venue.add(frame);
+    board = new T.Mesh(new T.PlaneGeometry(24, 10.5), new T.MeshBasicMaterial({map: boardTex, fog: false})); board.position.set(0, 24, -87.45); venue.add(board);
+    for (const sx of [-1, 1]){ const leg = new T.Mesh(new T.BoxGeometry(1, 18, 1), lam(0x2a2f40)); leg.position.set(sx*9, 9, -88); venue.add(leg); }
+  }
+  function drawBoard(){
+    const g = game; const key = g ? `${g.home}|${g.away}|${g.q}|${Math.floor(g.clock)}|${g.down}|${g.toGo}` : "-";
+    if (key === boardKey) return; boardKey = key;
+    const x = boardCtx;
+    x.fillStyle = "#06080f"; x.fillRect(0, 0, 512, 256);
+    x.fillStyle = COL.gold; x.font = `400 34px "Alfa Slab One", Georgia, serif`; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText("HOMECOMING", 256, 30);
+    const half = (cx0, col, name, pts) => {
+      x.fillStyle = col; x.fillRect(cx0 - 110, 60, 220, 44);
+      x.fillStyle = "#fff"; x.font = `700 32px "Barlow Condensed", sans-serif`; x.fillText(name, cx0, 83);
+      x.fillStyle = "#ffb43a"; x.font = `700 92px "Barlow Condensed", sans-serif`; x.fillText(String(pts), cx0, 160);
+    };
+    half(128, COL.home, "MUSTANGS", g ? g.home : 0); half(384, COL.away, "RAIDERS", g ? g.away : 0);
+    if (g){ x.fillStyle = "#ffb43a"; x.font = `700 34px "Barlow Condensed", sans-serif`;
+      x.fillText(`${g.q <= 4 ? ord(g.q) : "F"}  ${fmtClock(g.clock)}`, 256, 128);
+      x.fillStyle = "#fff"; x.font = `700 30px "Barlow Condensed", sans-serif`;
+      x.fillText(`${ord(g.down).toUpperCase()} & ${g.ballOn <= g.toGo ? "GOAL" : g.toGo}`, 256, 226); }
+    boardTex.needsUpdate = true;
+  }
+
+  /* ---------- goal posts ---------- */
+  function buildPosts(){
+    const y = lam(0xffd23a);
+    for (const zEnd of [-60, 60]){   // back of each end zone, in venue coordinates (venue is centered on the field)
+      const g = new T.Group(); g.position.set(0, 0, zEnd);
+      const base = new T.Mesh(new T.CylinderGeometry(0.15, 0.15, 3.3, 8), y); base.position.set(0, 1.65, 0); g.add(base);
+      const neck = new T.Mesh(new T.CylinderGeometry(0.12, 0.12, 0.7, 8), y); neck.rotation.x = Math.PI/2; neck.position.set(0, 3.33, zEnd < 0 ? 0.35 : -0.35); g.add(neck);
+      const bar = new T.Mesh(new T.CylinderGeometry(0.08, 0.08, 6.17, 8), y); bar.rotation.z = Math.PI/2; bar.position.set(0, 3.33, zEnd < 0 ? 0.7 : -0.7); g.add(bar);
+      for (const sx of [-1, 1]){ const up = new T.Mesh(new T.CylinderGeometry(0.06, 0.06, 10, 8), y); up.position.set(sx*3.08, 3.33 + 5, zEnd < 0 ? 0.7 : -0.7); g.add(up); }
+      venue.add(g);
+    }
+  }
+
+  /* ---------- players ---------- */
+  function buildMaterials(){
+    Object.assign(M, {home: lam(COL.home), away: lam(COL.away), pants: lam(COL.pants), awayPants: lam(0xd9d2c2), skin: lam(COL.skin), skin2: lam(COL.skinDark),
+      helmHome: lam(0xe8eef8), helmAway: lam(0x8e1c23), black: lam(0x151515), gold: lam(COL.gold), mask: lam(0xbfc3c9), sockAway: lam(0xf2e6d0),
+      shadow: new T.MeshBasicMaterial({color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false})});
+    const B = (w, h, d, dy = 0) => { const g = new T.BoxGeometry(w, h, d); g.translate(0, dy, 0); return g; };
+    const cap = (r, len, dy) => { const g = new T.CapsuleGeometry(r, len, 3, 8); g.translate(0, dy, 0); return g; };
+    const torso = new T.CylinderGeometry(0.31, 0.24, 0.58, 10); torso.scale(1, 1, 0.62); torso.translate(0, 0.29, 0);
+    const hips = new T.CylinderGeometry(0.25, 0.23, 0.3, 10); hips.scale(1, 1, 0.68);
+    const pads = new T.SphereGeometry(0.5, 14, 8); pads.scale(0.9, 0.34, 0.5);
+    Object.assign(G, {
+      hips, thigh: cap(0.115, 0.3, -0.25), shin: cap(0.085, 0.3, -0.21), shoe: B(0.18, 0.1, 0.32),
+      torso, pads, upper: cap(0.09, 0.2, -0.17), fore: cap(0.075, 0.2, -0.17),
+      neck: new T.CylinderGeometry(0.08, 0.09, 0.14, 8), helmet: new T.SphereGeometry(0.2, 14, 10), mask: B(0.28, 0.14, 0.05),
+      stripe: B(0.06, 0.03, 0.4), num: new T.PlaneGeometry(0.34, 0.34), shadow: new T.CircleGeometry(0.55, 16)
+    });
+  }
+  function numMat(num, team){
+    const key = team + num; if (numMats.has(key)) return numMats.get(key);
+    const c = document.createElement("canvas"); c.width = c.height = 64; const g = c.getContext("2d");
+    g.fillStyle = team === "home" ? COL.gold : "#f2e6d0"; g.font = `700 54px "Barlow Condensed", "Arial Narrow", sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(String(num), 32, 35);
+    const m = new T.MeshLambertMaterial({map: canvasTex(c), transparent: true, alphaTest: 0.4, depthWrite: false});
+    numMats.set(key, m); return m;
+  }
+  function makeFig(){
+    const mk = (geo, mat, x = 0, y = 0, z = 0) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); return m; };
+    const root = new T.Group(), low = new T.Group(), up = new T.Group(); root.add(low); low.add(up); up.position.y = 1.0;
+    const f = {root, low, up, legs: [], arms: [], jersey: [], team: "", num: -1};
+    f.shadow = mk(G.shadow, M.shadow, 0, 0.03, 0); f.shadow.rotation.x = -Math.PI/2; root.add(f.shadow);
+    for (const s of [-1, 1]){
+      const hip = new T.Group(); hip.position.set(s*0.13, 1.0, 0); low.add(hip);
+      const knee = new T.Group(); knee.position.y = -0.5; hip.add(knee);
+      const th = mk(G.thigh, M.pants), sh = mk(G.shin, M.home), shoe = mk(G.shoe, M.black, 0, -0.43, 0.05);
+      hip.add(th); knee.add(sh, shoe); f.legs.push({hip, knee, th, sh});
+    }
+    f.hips = mk(G.hips, M.pants); up.add(f.hips);
+    f.torso = mk(G.torso, M.home); up.add(f.torso);
+    f.pads = mk(G.pads, M.home, 0, 0.62, 0); up.add(f.pads);
+    f.numF = mk(G.num, M.gold, 0, 0.32, 0.18); f.numB = mk(G.num, M.gold, 0, 0.32, -0.18); f.numB.rotation.y = Math.PI; up.add(f.numF, f.numB);
+    for (const s of [-1, 1]){
+      const sh = new T.Group(); sh.position.set(s*0.45, 0.62, 0); up.add(sh);
+      const el = new T.Group(); el.position.y = -0.36; sh.add(el);
+      const ua = mk(G.upper, M.home), fa = mk(G.fore, M.skin);
+      sh.add(ua); el.add(fa); f.arms.push({sh, el, ua, fa});
+    }
+    f.neck = mk(G.neck, M.skin, 0, 0.76, 0); up.add(f.neck);
+    f.helm = mk(G.helmet, M.helmHome, 0, 0.93, 0); f.helm.scale.set(1, 1.05, 1.12); up.add(f.helm);
+    f.mask = mk(G.mask, M.mask, 0, 0.87, 0.2); up.add(f.mask);
+    f.stripe = mk(G.stripe, M.gold, 0, 1.13, 0); up.add(f.stripe);
+    root.visible = false; scene.add(root);
+    return f;
+  }
+  function dress(f, team, num){
+    if (f.team === team && f.num === num) return;
+    const home = team === "home", j = home ? M.home : M.away;
+    f.torso.material = f.pads.material = j;
+    for (const a of f.arms){ a.ua.material = j; a.fa.material = Math.random() < 0.5 ? M.skin : M.skin2; }
+    for (const l of f.legs){ l.th.material = home ? M.pants : M.awayPants; l.sh.material = home ? M.home : M.sockAway; }
+    f.hips.material = home ? M.pants : M.awayPants;
+    f.helm.material = home ? M.helmHome : M.helmAway; f.stripe.visible = home;
+    f.neck.material = f.arms[0].fa.material;
+    f.numF.material = f.numB.material = numMat(num, team);
+    f.team = team; f.num = num;
+  }
+  // o: x, z (game yards), face (radians, 0 = toward you), run (0..1 stride), anim (phase), crouch (0..1), down
+  function pose(f, o){
+    f.root.visible = true; f.root.position.set(o.x, 0, -o.z); f.root.rotation.y = o.face || 0;
+    const {low, up, legs, arms} = f;
+    if (o.down){
+      low.rotation.set(-Math.PI/2, 0, 0); low.position.set(0, 0.2, 0); up.rotation.x = 0;
+      for (const l of legs){ l.hip.rotation.x = 0; l.knee.rotation.x = 0; }
+      arms[0].sh.rotation.set(0, 0, -1.2); arms[1].sh.rotation.set(0, 0, 1.2); arms[0].el.rotation.x = arms[1].el.rotation.x = 0;
+      f.shadow.scale.set(1.3, 2.2, 1); return;
+    }
+    f.shadow.scale.set(1, 1, 1);
+    const cr = o.crouch || 0, run = o.run || 0, a = o.anim || 0, sw = Math.sin(a)*0.75*run;
+    // a stance: knees bend, hips drop, chest leans over the line
+    const kneeBend = cr*1.3, thighFwd = cr*0.75, drop = 1.0 - (0.5*Math.cos(thighFwd) + 0.5*Math.cos(kneeBend - thighFwd));
+    low.rotation.set(0, 0, 0); low.position.set(0, -drop + Math.abs(Math.cos(a))*0.06*run, 0);
+    up.rotation.x = cr*0.7 + run*0.25;
+    legs[0].hip.rotation.x = -thighFwd - sw; legs[1].hip.rotation.x = -thighFwd + sw;
+    legs[0].knee.rotation.x = kneeBend + Math.max(0, sw)*1.2; legs[1].knee.rotation.x = kneeBend + Math.max(0, -sw)*1.2;
+    const reach = o.reach || 0;
+    arms[0].sh.rotation.set(sw*0.9 - reach*1.3 - cr*0.6, 0, -0.12); arms[1].sh.rotation.set(-sw*0.9 - reach*1.3 - cr*0.6, 0, 0.12);
+    arms[0].el.rotation.x = arms[1].el.rotation.x = -0.6*run - 0.4*(1 - reach)*cr;
+  }
+
+  /* ---------- hole arrow, ball, fireworks ---------- */
+  function buildArrow(){
+    const s = new T.Shape(); s.moveTo(-0.5, 0); s.lineTo(0.5, 0); s.lineTo(0.5, 1.8); s.lineTo(1.1, 1.8); s.lineTo(0, 3); s.lineTo(-1.1, 1.8); s.lineTo(-0.5, 1.8); s.closePath();
+    arrow = new T.Mesh(new T.ShapeGeometry(s), new T.MeshBasicMaterial({color: 0xffcf3f, transparent: true, opacity: 0.8, depthWrite: false}));
+    arrow.rotation.x = -Math.PI/2; arrow.position.y = 0.04; arrow.renderOrder = 2; scene.add(arrow);
+  }
+  function buildBall(){
+    ballMesh = new T.Mesh(new T.SphereGeometry(0.2, 12, 8), lam(0x7a3f1d)); ballMesh.scale.set(1, 0.6, 0.6); ballMesh.visible = false; scene.add(ballMesh);
+  }
+  function buildFireworks(){
+    const N = 360, pos = new Float32Array(N*3), col = new Float32Array(N*3), geo = new T.BufferGeometry();
+    geo.setAttribute("position", new T.BufferAttribute(pos, 3)); geo.setAttribute("color", new T.BufferAttribute(col, 3));
+    const pts = new T.Points(geo, new T.PointsMaterial({size: 0.9, vertexColors: true, transparent: true, depthWrite: false, blending: T.AdditiveBlending, fog: false}));
+    pts.visible = false; pts.frustumCulled = false; venue.add(pts);
+    fw = {pts, pos, col, vel: new Float32Array(N*3), N, t: 9};
+  }
+  function launchFireworks(){
+    const {pos, col, vel, N} = fw, c = new T.Color(), pal = [COL.gold, "#ffffff", "#5b9bff", COL.gold];
+    for (let b = 0; b < 4; b++){
+      const ox = rand(-25, 25), oy = rand(28, 40), oz = rand(-80, -50), cc = c.set(pal[b]);
+      for (let i = b*N/4; i < (b + 1)*N/4; i++){
+        const th = rand(0, Math.PI*2), ph = Math.acos(rand(-1, 1)), sp = rand(6, 11);
+        pos.set([ox, oy, oz], i*3); vel.set([Math.sin(ph)*Math.cos(th)*sp, Math.cos(ph)*sp, Math.sin(ph)*Math.sin(th)*sp], i*3); col.set([cc.r, cc.g, cc.b], i*3);
+      }
+    }
+    fw.t = 0; fw.pts.visible = true;
+  }
+  function stepFireworks(dt){
+    if (!fw.pts.visible) return;
+    fw.t += dt; const {pos, vel, N} = fw, k = Math.exp(-1.2*dt);
+    for (let i = 0; i < N; i++){ vel[i*3] *= k; vel[i*3 + 1] = vel[i*3 + 1]*k - 6*dt; vel[i*3 + 2] *= k;
+      pos[i*3] += vel[i*3]*dt; pos[i*3 + 1] += vel[i*3 + 1]*dt; pos[i*3 + 2] += vel[i*3 + 2]*dt; }
+    fw.pts.geometry.attributes.position.needsUpdate = true;
+    fw.pts.material.opacity = clamp(1.6 - fw.t*0.6, 0, 1);
+    if (fw.t > 2.8) fw.pts.visible = false;
+  }
+
+  /* ---------- per frame ---------- */
+  let lastT = 0;
+  function draw(c, t){
+    const dt = Math.min(0.05, lastT ? t - lastT : 0); lastT = t;
+    if (el.hidden) el.hidden = false;
+    const g = game, ballOn = g ? g.ballOn : 75;
+    venue.position.z = -(ballOn - 50);
+    // camera matches the 2D projection exactly, so 2D overlays line up with 3D players
+    const sh = g && g.shake > 0 ? g.shake*0.12 : 0;
+    cam.position.set(c.x + rand(-1, 1)*sh, c.h + rand(-1, 1)*sh, -c.z);
+    cam.fov = 2*Math.atan((H/2)/c.F)*180/Math.PI; cam.aspect = W/H;
+    cam.setViewOffset(W, H, 0, H/2 - c.hor, W, H); cam.updateProjectionMatrix();
+    // lines and arrow
+    const showLines = g && g.phase !== "opp";
+    losLine.visible = !!showLines; losLine.position.set(0, 0.02, 0);
+    fdLine.visible = !!(showLines && g.toGo < g.ballOn); if (g) fdLine.position.set(0, 0.025, -g.toGo);
+    arrow.visible = !!(g && g.playType === "run" && (g.phase === "huddle" || g.phase === "cadence"));
+    if (arrow.visible){ arrow.position.set(g.play.hole, 0.04, -1.6); arrow.material.opacity = 0.55 + 0.4*Math.sin(t*6); }
+    // crowd
+    const hype = g ? (g.flash > 0 ? 1 : g.phase === "live" && g.playType !== "pass" && g.p.z > 8 && g.p.speed > 6.5 ? 0.45 : g.phase === "cadence" ? 0 : 0.08) : 0.05;
+    for (const m of crowdMats){ m.userData.u.uTime.value = t; m.userData.u.uHype.value += (hype - m.userData.u.uHype.value)*Math.min(1, dt*3); }
+    if (g && g.flash > lastFlash + 0.5) launchFireworks();
+    lastFlash = g ? g.flash : 0; stepFireworks(dt);
+    drawBoard();
+    placePlayers(t);
+    // ball in the air
+    const b = g && g.ball;
+    ballMesh.visible = !!b;
+    if (b){ const u = clamp((t - b.t0)/b.dur, 0, 1), z = lerp(b.z0, b.z1, u), x = lerp(b.x0, b.x1, u), y = 2 + Math.sin(u*Math.PI)*(3 + Math.abs(b.z1 - b.z0)*0.25);
+      ballMesh.position.set(x, y, -z); ballMesh.rotation.set(0, Math.atan2(b.x1 - b.x0, -(b.z1 - b.z0)) + Math.PI/2, t*14); }
+    renderer.render(scene, cam);
+    guard(dt);
+  }
+  function placePlayers(t){
+    const g = game; let n = 0;
+    const put = (team, num, o) => { if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, o); };
+    if (g && g.phase !== "opp"){
+      const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
+      const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") && g.pp ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
+      const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset, live = g.phase === "live";
+      for (let i = 0; i < 5; i++){
+        let x = slots[i]; if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
+        put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0});
+      }
+      for (let i = 0; i < 4; i++){
+        let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
+        put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0});
+      }
+      for (const d of g.defenders){
+        const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
+        const moving = live && Math.hypot(d.vx, d.vz) > 0.5;
+        const face = moving ? clamp(Math.atan2(d.vx, -d.vz), -1.2, 1.2) : 0;
+        put("away", d.num, {x: d.x, z: d.z, face, down, run: moving ? 1 : live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" ? 0.8 : 0});
+      }
+    }
+    for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
+  }
+  // body tracking matters more than pixels: if detection slows down, render fewer pixels, then go back to 2D
+  function guard(dt){
+    if (mode !== "body" || !BodyCore.camera) return;
+    lowFor = BodyCore.fps < 20 ? lowFor + dt : Math.max(0, lowFor - dt);
+    if (lowFor < 4) return;
+    lowFor = 0;
+    if (pr > 1){ pr = 1; renderer.setPixelRatio(pr); renderer.setSize(W, H, false); info.pr = pr; }
+    else off("tracking slowed down");
+  }
+  function resize(){ if (renderer){ renderer.setSize(W, H, false); boardKey = ""; } }
+  function hide(){ if (el) el.hidden = true; }
+  return {ready, draw, resize, hide, info};
+})();
 
 /* ============ loop and flow ============ */
 let last = 0;
@@ -1795,7 +2213,7 @@ $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, sfx, set paused(v){ paused = v; }, setup,
+window.__hh = { get game(){ return game; }, input, startTouch, sfx, r3: R3.info, set paused(v){ paused = v; }, setup,
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();

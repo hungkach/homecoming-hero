@@ -42,6 +42,8 @@ Distances vary by device. Living room tries the back ultra-wide lens first, then
 ## How it's built
 
 - One file, `index.html`, with no build step.
+- The stadium, field, and players are 3D (three.js from a CDN): tiered stands with a crowd that jumps on big plays, light towers, a live scoreboard, goal posts, and fireworks on touchdowns. Your hands, timing rings, and the camera view stay 2D on top. Without WebGL, or with `?2d` added to the link, the game draws the flat 2D view instead. In body play, if tracking drops under 20 fps, the 3D view lowers its resolution, then falls back to 2D.
+- All sound is synthesized: a stadium crowd that hushes for the snap count and builds as you break into the open, chants, a band, and an air horn. Spoken calls use the best English voice on the device, and you can pick one on the start screen.
 - Body tracking uses MediaPipe Pose Landmarker (lite model, capped at 30 fps) from a CDN.
 - The shared tracking lives in one marked `<script>` block, **body core v0.1**, so it can be copied into other games:
   - Body heights (hip drop, knee rise) come from image landmarks, in torso lengths. Angles and arm heights come from world landmarks, measured against the "up" direction learned while you stand tall. Knee angle is never used.
