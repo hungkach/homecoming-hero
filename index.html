@@ -69,6 +69,11 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .stats span{font:600 13px/1.2 var(--cond);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim)}
 .toggle{display:flex;align-items:center;gap:10px;font-size:16px;color:var(--ink)}
 .toggle input{width:20px;height:20px;accent-color:var(--gold)}
+.modeInfo{background:rgba(255,255,255,.06);border-radius:12px;padding:12px 14px;font-size:16px;line-height:1.4;color:var(--ink-dim)}
+.modeInfo b{display:block;font:400 19px/1.2 var(--slab);color:var(--ink);margin-bottom:4px}
+.pick{display:grid;gap:6px;font:600 14px/1 var(--cond);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim)}
+.pick select{font:600 17px/1.2 var(--cond);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f1730;color:var(--ink);text-transform:none;letter-spacing:0}
+.diag{font:500 13px/1.3 var(--cond);color:var(--ink-dim);opacity:.8;font-variant-numeric:tabular-nums}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -108,10 +113,42 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   </div>
 </div>
 
+<div class="overlay" id="setupScreen" hidden>
+  <div class="card">
+    <h2>Camera setup</h2>
+    <div id="screenAsk">
+      <p style="margin-bottom:10px">Where will you watch?</p>
+      <div class="btns">
+        <button id="screenDevice" type="button">This phone</button>
+        <button id="screenTv" class="ghost" type="button">My TV</button>
+      </div>
+    </div>
+    <div class="modeInfo" id="modeInfo"></div>
+    <label class="pick" for="modeSel">Setup
+      <select id="modeSel">
+        <option value="auto">Automatic</option>
+        <option value="living_room">Living room (phone camera, TV screen)</option>
+        <option value="phone_vertical">Phone upright</option>
+        <option value="phone_horizontal">Phone sideways</option>
+        <option value="tablet_horizontal">Tablet sideways</option>
+        <option value="tablet_vertical">Tablet upright</option>
+        <option value="laptop">Laptop</option>
+      </select>
+    </label>
+    <div class="status" id="setupStatus"></div>
+    <div class="btns">
+      <button id="setupGo" type="button">Start camera</button>
+      <button id="setupBack" class="ghost" type="button">Back</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="calibScreen" hidden style="place-items:start center">
   <div class="card" style="margin-top:12vh">
     <h2 id="calibTitle">Get in frame</h2>
     <p id="calibMsg" style="font-size:clamp(17px,2.8vh,28px)">Step back until your head and knees are both visible. About 4 feet is enough.</p>
+    <p id="calibNote" class="note" hidden></p>
+    <p id="calibDiag" class="diag"></p>
   </div>
 </div>
 
@@ -176,14 +213,92 @@ const BodyCore = (() => {
       minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5});
     try { landmarker = await make("GPU"); } catch(e){ landmarker = await make("CPU"); }
   }
-    async function openCamera(videoEl){
+    /* ---------- viewing modes ----------
+     Distances are approximate and vary by device. "frame" is what has to
+     fit on screen: "full" = head to ankles, "knees" = head to knees. */
+  const MODES = {
+    living_room:       {label: "Living room", facing: "environment", orient: "landscape", frame: "full", dist: "3 to 4 ft",
+      setup: "Stand the phone sideways on the front edge of your TV stand, back camera facing you, top leaned back a little. Mirror the screen to your TV."},
+    phone_vertical:    {label: "Phone upright", facing: "user", orient: "portrait", frame: "full", dist: "about 4.5 ft",
+      setup: "Stand the phone upright at about waist height."},
+    phone_horizontal:  {label: "Phone sideways", facing: "user", orient: "landscape", frame: "knees", dist: "about 4 ft",
+      setup: "Stand the phone sideways at about waist height."},
+    tablet_horizontal: {label: "Tablet sideways", facing: "user", orient: "landscape", frame: "full", dist: "3 to 4 ft",
+      setup: "Stand the tablet sideways at about waist height."},
+    tablet_vertical:   {label: "Tablet upright", facing: "user", orient: "portrait", frame: "full", dist: "about 4 ft",
+      setup: "Stand the tablet upright at about waist height."},
+    laptop:            {label: "Laptop", facing: "user", orient: "landscape", frame: "knees", dist: "about 5.5 ft",
+      setup: "Set the laptop at about waist height, screen tilted so the camera sees you."}
+  };
+  // modes that are the same setup turned the other way
+  const PARTNER = {phone_vertical: "phone_horizontal", phone_horizontal: "phone_vertical", tablet_vertical: "tablet_horizontal", tablet_horizontal: "tablet_vertical"};
+
+  function detectDevice(){
+    const ua = navigator.userAgent || "", touch = navigator.maxTouchPoints || 0;
+    if (/iPhone|iPod/.test(ua) || (/Android/.test(ua) && /Mobile/.test(ua))) return "phone";
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && touch > 1) || (/Android/.test(ua) && !/Mobile/.test(ua))) return "tablet";
+    return "laptop";
+  }
+  // auto-pick; the player only answers "where's the screen?"
+  function pickMode({device, screen, needsWidth = false, isVertical = false}){
+    if (device === "phone" && screen === "tv") return "living_room";
+    if (device === "tablet") return needsWidth ? "tablet_horizontal" : "tablet_vertical";
+    if (device === "laptop") return "laptop";
+    return isVertical ? "phone_vertical" : "phone_horizontal";
+  }
+
+  const CAM_4x3 = {width: {ideal: 640}, height: {ideal: 480}, aspectRatio: {ideal: 4/3}, frameRate: {ideal: 30}};
+  const getStream = v => navigator.mediaDevices.getUserMedia({audio: false, video: Object.assign({}, CAM_4x3, v)});
+  const stopStream = s => { if (s) s.getTracks().forEach(t => t.stop()); };
+  // zoom all the way out when the browser allows it (some back cameras reach the ultra-wide this way)
+  async function widestZoom(track){
+    try{
+      const caps = track.getCapabilities ? track.getCapabilities() : {}, cur = track.getSettings ? track.getSettings().zoom : undefined;
+      if (caps.zoom && caps.zoom.min < (cur ?? 1)){ await track.applyConstraints({advanced: [{zoom: caps.zoom.min}]}); return caps.zoom.min; }
+    }catch(e){}
+    return null;
+  }
+  async function openCamera(modeKey, videoEl){
     video = videoEl; stop();
-    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: "user", width: {ideal: 640}, height: {ideal: 480}, aspectRatio: {ideal: 4/3}, frameRate: {ideal: 30}}});
-    video.srcObject = stream; await video.play();
-    const tr = stream.getVideoTracks()[0];
-    camInfo = {label: tr.label || "Camera", width: video.videoWidth, height: video.videoHeight};
+    const m = Object.assign({key: modeKey}, MODES[modeKey]), notes = [];
+    let s = null;
+    if (m.facing === "environment"){
+      // fallback chain: back ultra-wide (landscape, full body) > back main (portrait, knees-up) > front (phone screen instead of TV)
+      try{
+        s = await getStream({facingMode: {ideal: "environment"}});
+        const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+        const uw = cams.find(d => /ultra ?wide/i.test(d.label) && !/front/i.test(d.label));
+        if (uw && s.getVideoTracks()[0].getSettings().deviceId !== uw.deviceId){
+          try { const s2 = await getStream({deviceId: {exact: uw.deviceId}}); stopStream(s); s = s2; } catch(e){}
+        }
+        const tr = s.getVideoTracks()[0];
+        if (/front|user|facetime/i.test(tr.label) || (tr.getSettings().facingMode && tr.getSettings().facingMode !== "environment")) throw new Error("no back camera");
+        const zoom = /ultra ?wide/i.test(tr.label) ? null : await widestZoom(tr);
+        if (/ultra ?wide/i.test(tr.label) || (zoom != null && zoom < 1)){
+          m.camera = "rear_ultrawide_landscape";
+        } else {
+          m.camera = "rear_main_portrait"; m.orient = "portrait"; m.frame = "knees"; m.dist = "about 3 ft";
+          m.setup = "Stand the phone upright on the front edge of your TV stand, back camera facing you. Mirror the screen to your TV.";
+          notes.push("The browser won't share the ultra-wide lens, so this uses the main back camera. Stand the phone upright and play knees-up at about 3 ft.");
+        }
+      }catch(e){
+        stopStream(s); s = null;
+        Object.assign(m, MODES.phone_vertical, {key: "phone_vertical", camera: "front_portrait_4x3", fallbackFrom: "living_room"});
+        notes.push("The back camera isn't available, so this uses the front camera. Watch the phone screen instead of the TV.");
+      }
+    }
+    if (!s){
+      s = await getStream({facingMode: "user"});
+      m.camera = m.camera || "front";
+      await widestZoom(s.getVideoTracks()[0]);
+    }
+    stream = s; video.srcObject = s; await video.play();
+    const tr = s.getVideoTracks()[0], st = tr.getSettings ? tr.getSettings() : {};
+    camInfo = {label: tr.label || "Camera", width: video.videoWidth || st.width, height: video.videoHeight || st.height, zoom: st.zoom ?? null, mode: m, notes};
     return camInfo;
   }
+  // a phone or tablet turned the other way: same camera, partner mode
+  function partnerMode(modeKey){ return PARTNER[modeKey] || null; }
 
   function update(){
     if (!landmarker || !video || video.readyState < 2) return false;
@@ -426,7 +541,8 @@ const BodyCore = (() => {
     get camera(){ return camInfo; },
     get latency(){ return latency; },
     setLatency(v){ latency = clamp(v, 0, 0.6); },
-        openCamera,
+        MODES, detectDevice, pickMode, openCamera, partnerMode,
+    attach(videoEl){ video = videoEl; },
 
   };
 })();
@@ -558,12 +674,14 @@ let calibHold = 0;
 function bodyVisible(){
   const P = BodyCore.pose, L = BodyCore.LM;
   if (!P || now() - BodyCore.lastPoseAt > 0.5) return false;
-  return [L.nose, L.lSh, L.rSh, L.lHip, L.rHip, L.lKn, L.rKn].every(i => P.img[i].v > 0.5);
+  const need = [L.nose, L.lSh, L.rSh, L.lHip, L.rHip, L.lKn, L.rKn].concat(camMode && camMode.frame === "full" ? [L.lAn, L.rAn] : []);
+  return need.every(i => P.img[i].v > 0.5);
 }
 function updateCalib(dt){
   if (!bodyVisible()){ calibHold = 0;
     $("calibTitle").textContent = "Get in frame";
-    $("calibMsg").textContent = BodyCore.pose ? "Almost. Step back until your knees are in the picture too." : "Stand facing the phone, about 4 feet back.";
+    const part = camMode && camMode.frame === "full" ? "feet" : "knees";
+    $("calibMsg").textContent = BodyCore.pose ? `Almost. Step back until your ${part} are in the picture too.` : `Stand facing the camera, ${camMode ? camMode.dist : "about 4 ft"} back.`;
     return false; }
   calibHold += dt;
   const left = Math.ceil(2.5 - calibHold);
@@ -1049,6 +1167,7 @@ function frame(ms){
   requestAnimationFrame(frame);
   const t = ms/1000, dt = Math.min(0.05, last ? t - last : 0); last = t;
   if (mode === "body"){ BodyCore.update(); pumpBody(); }
+  if (calibrating) updateDiag();
   if (calibrating && updateCalib(dt)){ calibrating = false; $("calibScreen").hidden = true; if (recentering){ recentering = false; paused = false; last = 0; } else beginGame(); }
   update(dt);
   render(t);
@@ -1061,22 +1180,52 @@ function primeAudio(){
   if (window.speechSynthesis){ try{ speechSynthesis.speak(new SpeechSynthesisUtterance("")); }catch(e){} }
 }
 async function startTouch(){ primeAudio(); mode = "touch"; keepAwake(); $("startScreen").hidden = true; beginGame(); }
-async function startBody(){
+let camMode = null, screenChoice = "device";
+function resolveMode(){
+  const sel = $("modeSel").value;
+  if (sel !== "auto") return sel;
+  const device = BodyCore.detectDevice(), portrait = innerHeight > innerWidth;
+  let key = BodyCore.pickMode({device, screen: screenChoice, needsWidth: false, isVertical: portrait});
+  const partner = BodyCore.partnerMode(key);
+  if (partner && (BodyCore.MODES[key].orient === "portrait") !== portrait) key = partner;   // HH works either way, so follow how the device is turned
+  return key;
+}
+function renderSetup(){
+  $("screenAsk").hidden = BodyCore.detectDevice() !== "phone" || $("modeSel").value !== "auto";
+  $("screenDevice").classList.toggle("ghost", screenChoice !== "device");
+  $("screenTv").classList.toggle("ghost", screenChoice !== "tv");
+  const M = BodyCore.MODES[resolveMode()];
+  $("modeInfo").innerHTML = `<b>${M.label}</b>Stand ${M.dist} away. ${M.setup}`;
+}
+function openSetup(){
   primeAudio();
-  $("touchBtn").disabled = $("bodyBtn").disabled = true;
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia){
+    setStatus("Body play can't start here. Open the game from its own https link, like GitHub Pages. Touch play works here.", true); return;
+  }
+  $("startScreen").hidden = true; $("setupScreen").hidden = false; renderSetup();
+}
+async function startBody(){
+  const status = (t, err) => { const el = $("setupStatus"); el.textContent = t; el.classList.toggle("err", !!err); };
+  $("setupGo").disabled = true;
   try{
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error("insecure");
-    await BodyCore.load(setStatus);
-    setStatus("Starting the camera...");
-    if (!BodyCore.camera) await BodyCore.openCamera(video);
+    await BodyCore.load(status);
+    status("Starting the camera...");
+    const info = await BodyCore.openCamera(resolveMode(), video);
+    camMode = info.mode; status("");
     mode = "body"; keepAwake(); calibHold = 0;
-    $("startScreen").hidden = true; $("calibScreen").hidden = false; calibrating = true;
+    $("calibNote").textContent = info.notes.join(" "); $("calibNote").hidden = !info.notes.length;
+    $("setupScreen").hidden = true; $("calibScreen").hidden = false; calibrating = true;
   }catch(e){
-    let msg = "Body play can't start here. Open the game from its own https link, like GitHub Pages. Touch play works here.";
-    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "The camera isn't available in this viewer. Open the game from its own https link to play with your body. Touch play works here.";
+    let msg = "The camera didn't start. Reload and try again.";
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) msg = "Camera access was blocked. Allow the camera for this site in your browser settings, then reload.";
     else if (e && e.name === "NotFoundError") msg = "No camera found on this device.";
-    setStatus(msg, true);
-  }finally{ $("touchBtn").disabled = $("bodyBtn").disabled = false; }
+    else if (e && /import|fetch|load/i.test(String(e.message))) msg = "The body tracker didn't load. Check your connection and reload.";
+    status(msg, true);
+  }finally{ $("setupGo").disabled = false; }
+}
+function updateDiag(){
+  const c = BodyCore.camera; if (!c) return;
+  $("calibDiag").textContent = `${c.mode.label} · ${c.label} · ${c.width}×${c.height}${c.zoom != null ? ` · zoom ${c.zoom}` : ""} · ${BodyCore.fps} fps`;
 }
 function beginGame(){
   $("endScreen").hidden = true; $("board").hidden = false; $("pauseBtn").hidden = mode !== "touch";
@@ -1085,7 +1234,13 @@ function beginGame(){
 }
 function pause(){ if (!game || game.phase === "over") return; paused = true; $("pauseScreen").hidden = false; }
 $("touchBtn").addEventListener("click", startTouch);
-$("bodyBtn").addEventListener("click", startBody);
+$("bodyBtn").addEventListener("click", openSetup);
+$("setupGo").addEventListener("click", startBody);
+$("setupBack").addEventListener("click", () => { $("setupScreen").hidden = true; $("startScreen").hidden = false; });
+$("screenDevice").addEventListener("click", () => { screenChoice = "device"; renderSetup(); });
+$("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup(); });
+$("modeSel").addEventListener("change", renderSetup);
+window.addEventListener("resize", () => { if (!$("setupScreen").hidden) renderSetup(); });
 $("againBtn").addEventListener("click", () => { primeAudio(); beginGame(); });
 $("pauseBtn").addEventListener("click", e => { e.stopPropagation(); pause(); });
 $("resumeBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; last = 0; });
