@@ -40,7 +40,7 @@ const HH = window.__hh;
       } else HH.input.keyStance = false;
     }
     if (g.phase === "live" && g.playType !== "pass"){
-      if (t >= nextStep){ els.field._l.pointerdown({clientX:100, clientY:100}); els.field._l.pointerup({clientX:100, clientY:100}); nextStep = t + 1/4.6; }
+      if (t >= nextStep){ els.field._l.pointerdown({clientX:100, clientY:100}); els.field._l.pointerup({clientX:100, clientY:100}); nextStep = t + 1/(+process.env.CADENCE || 4.6); }
       if (skill === "good"){
         const p = g.p;
         const threat = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && (g.t <= -d.delay) && d.z > p.z && d.z - p.z < 2.3 && Math.abs(d.x - p.x) < 1.3)[0];

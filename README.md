@@ -51,6 +51,8 @@ Distances vary by device. Living room tries the back ultra-wide lens first, then
 
 - One file, `index.html`, with no build step.
 - The stadium, field, and players are 3D (three.js from a CDN): tiered stands with a crowd that jumps on big plays, light towers, a live scoreboard, goal posts, and fireworks on touchdowns. Your hands, timing rings, and the camera view stay 2D on top. Without WebGL, or with `?2d` added to the link, the game draws the flat 2D view instead. In body play, if tracking drops under 20 fps, the 3D view lowers its resolution, then falls back to 2D.
+- Defense, after Ghost Reps' team pursuit: linebackers read and take on blockers, then shed; everyone takes a leading pursuit angle on where they last saw you heading; defensive backs keep a cushion and come downhill under control; defenders break down when you run at them. Bodies accelerate and turn gradually and don't run through each other.
+- Contact is a small momentum model. Your speed into the hit (more when trucking) is weighed against the defender's speed and planted strength. Fast runners break more tackles, knock defenders back, and fall forward for extra yards. A defender who comes in hot can be juked clean; one who breaks down still gets a hand on you. A cut costs speed, and getting back up to speed takes a moment.
 - All sound is synthesized: a stadium crowd that hushes for the snap count and builds as you break into the open, chants, a band, and an air horn. Spoken calls use the best English voice on the device, and you can pick one on the start screen.
 - Body tracking uses MediaPipe Pose Landmarker (lite model, capped at 30 fps) from a CDN.
 - The shared tracking lives in one marked `<script>` block, **body core v0.2**, so it can be copied into other games:

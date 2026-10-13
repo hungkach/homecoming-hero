@@ -26,7 +26,7 @@ Run these from the repo root after any change to logic:
 ```
 node tests/core_test.js index.html 1.5 0       # synthetic body through the core; try other distances (m) and tilts (deg)
 node tests/camera_test.js index.html           # living room fallback chain and auto-pick
-node tests/full_game.js index.html good        # full touch game with an autopilot (also: lazy)
+node tests/full_game.js index.html good        # full touch game with an autopilot (also: lazy); CADENCE=3.2 sets taps per second (default 4.6)
 node tests/pass_test.js index.html good        # forced pass plays (also: nopunch, nostance, lazy)
 node tests/route_test.js index.html good       # forced route plays (also: nobreak, wrongway, nohands, lazy)
 node tests/startup_test.js index.html living_room 2.3 0.3   # setup, warm-up, latency, play; add "pass" or "route"; MISS=duck,jump skips moves to test the third round
@@ -40,4 +40,6 @@ Done: body core v0.2 (adds arm raise, duck, jump), six viewing modes with auto-p
 
 The 3D view and the crowd can't be checked by the Node tests. Check them in Chromium with Playwright (pre-installed in cloud sessions), serving three.js from npm because the CDN may be blocked there.
 
-Next: Mark's real-device playtests on iPhone, iPad, and living room mode with screen mirroring. Expect threshold tuning first. Gameplay balance (jukes score too easily) comes later, on purpose.
+Balance (perfect touch autopilot, about 8 games each): about 2 TDs a game and 7 yards a carry at 3.2 steps a second, about 5 to 6 TDs at 4.6 and up; the no-moves autopilot scores almost never. Speed is meant to pay off. Re-check these after any change to defense, contact, or speed.
+
+Next: Mark's real-device playtests on iPhone, iPad, and living room mode with screen mirroring. Expect threshold tuning for the new moves first.

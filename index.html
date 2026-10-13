@@ -1291,10 +1291,14 @@ function spawnDefense(){
   add("LB", rand(-7, -4), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
   add("LB", rand(-1.5, 1.5), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.2);
   add("LB", rand(4, 7), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
-  add("DB", rand(-10, -6), rand(11, 14), 7.9 + d*0.6, 6, 0.26, 0.35);
-  add("DB", rand(6, 10), rand(11, 14), 7.9 + d*0.6, 6, 0.26, 0.35);
+  add("DB", rand(-10, -6), rand(11, 14), 8.4 + d*0.6, 6, 0.26, 0.35);
+  add("DB", rand(6, 10), rand(11, 14), 8.4 + d*0.6, 6, 0.26, 0.35);
   add("DB", -17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
   add("DB", 17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
+  // run blocking: linemen climb to the linebackers, who have to shed before they can pursue.
+  // The one closest to the hole sheds last, so the hole is real.
+  const lbs = D.filter(x => x.type === "LB").sort((a, b) => Math.abs(a.x - g.play.hole) - Math.abs(b.x - g.play.hole));
+  lbs.forEach((x, i) => x.blockedUntil = (i === 0 ? rand(1.0, 1.5) : rand(0.6, 1.1)) - d*0.25);
   // goal line: defenders can't line up past the end zone
   for (const x of D) x.z = Math.min(x.z, g.ballOn + 2);
   g.defenders = D;
@@ -1304,6 +1308,65 @@ function spawnDefense(){
 // measured camera plus screen delay; touch has none
 const LAT = () => mode === "body" ? BodyCore.latency : 0;
 function stepsPerSec(t){ while (input.steps.length && t - input.steps[0] > 1.2) input.steps.shift(); return input.steps.length/1.2; }
+// where a defender thinks you are and where you're heading, as of his reaction time ago
+function seenRunner(p, lag, t){
+  const h = p.xHist, at = s => { for (let i = h.length - 1; i >= 0; i--) if (t - h[i].t >= s) return h[i]; return h[0] || {t, x: p.x, z: p.z}; };
+  const a = at(lag), b = at(lag + 0.15), dt = a.t - b.t;
+  return {x: a.x, z: a.z ?? p.z, vx: dt > 0.05 ? (a.x - b.x)/dt : 0, vz: dt > 0.05 ? ((a.z ?? p.z) - (b.z ?? p.z))/dt : p.speed};
+}
+// Defender movement, after Ghost Reps' team pursuit: read first, then take a leading angle on where he
+// saw you heading, and break down near the ball carrier. Bodies have mass: they accelerate and turn
+// gradually, and they don't run through each other.
+const DEF_ACC = {DL: 7, LB: 9, DB: 10, COV: 9};
+function steer(d, tx, tz, want, dt){
+  const dx = tx - d.x, dz = tz - d.z, dist = Math.hypot(dx, dz) || 1;
+  const wx = dx/dist*want, wz = dz/dist*want, acc = (DEF_ACC[d.type] || 9)*dt;
+  let ax = wx - d.vx, az = wz - d.vz; const a = Math.hypot(ax, az);
+  if (a > acc){ ax *= acc/a; az *= acc/a; }
+  d.vx += ax; d.vz += az; d.x += d.vx*dt; d.z += d.vz*dt;
+}
+function moveDefender(d, dt, t){
+  const g = game, p = g.p;
+  // engaged with a blocker: he gets pushed around a little, working toward the runner's lane
+  d.engaged = !!(d.blockedUntil && -g.t < d.blockedUntil && g.playType === "run" && !g.caught);
+  if (d.engaged){ steer(d, d.x + clamp(p.x - d.x, -0.6, 0.6), d.z, 1.0, dt); return; }
+  if (g.t > -d.delay){
+    // the read: linebackers flow toward the called hole, defensive backs backpedal, linemen hold
+    if (d.type === "LB") steer(d, d.x + clamp((g.play.hole === 99 ? 0 : g.play.hole) - d.x, -2, 2), d.z, 2.2, dt);
+    else if (d.type === "DB") steer(d, d.x, d.z + 2, 1.6, dt);
+    else steer(d, d.x, d.z, 0, dt);
+    return;
+  }
+  // a defender who has broken down in front of you reads you faster: come in hot and a juke beats him
+  const near = Math.hypot(p.x - d.x, p.z - d.z) < 3 && d.z > p.z - 0.3 && Math.abs(p.x - d.x) < 1.5;
+  const r = seenRunner(p, near ? Math.min(d.react, 0.14) : d.react, t), dist = Math.hypot(r.x - d.x, r.z - d.z);
+  const lead = intercept(d, r);                                      // aim where he's going, not where he is
+  let tx = r.x + r.vx*lead, tz = r.z + r.vz*lead, want = d.speed;
+  // the last line keeps a cushion: defensive backs stay in front of the runner until he's close
+  // and come downhill under control until he's close
+  if (d.type === "DB" && d.z > p.z && dist > 5){ tz = Math.max(tz, p.z + 5); want = Math.min(want, 5.5); }
+  // break down: inside 3 yards and in front of him, chop the feet and square up on the ball carrier
+  // only when you're running at him; if you're crossing his face he keeps leading you at full speed
+  const headOn = Math.abs(r.x - d.x) < 1.5 && Math.abs(r.vx) < 3;
+  if (dist < 3 && d.z > p.z - 0.3 && headOn){ const l = Math.min(lead, 0.3); tx = r.x + r.vx*l; tz = r.z + r.vz*l; want = lerp(d.speed*0.75, d.speed, clamp((dist - 1)/2, 0, 1)); }
+  steer(d, tx, tz, want, dt);
+}
+// the pursuit angle: the soonest time he can meet the runner if the runner keeps going the same way,
+// capped at 2.5 s; if he can't get there at all, he leads by a second and keeps chasing
+function intercept(d, r){
+  const rx = r.x - d.x, rz = r.z - d.z, a = r.vx*r.vx + r.vz*r.vz - d.speed*d.speed, b = 2*(rx*r.vx + rz*r.vz), c = rx*rx + rz*rz;
+  let tt = null;
+  if (Math.abs(a) < 1e-6) tt = b < 0 ? -c/b : null;
+  else { const disc = b*b - 4*a*c; if (disc >= 0){ const q = Math.sqrt(disc), t1 = (-b - q)/(2*a), t2 = (-b + q)/(2*a);
+    tt = [t1, t2].filter(x => x > 0).sort((x, y) => x - y)[0] ?? null; } }
+  return tt == null ? 1.0 : Math.min(tt, 2.5);
+}
+function separate(list){
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++){
+    const a = list[i], b = list[j], dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+    if (d > 0 && d < 0.9){ const k = (0.9 - d)/2/d; a.x -= dx*k; a.z -= dz*k; b.x += dx*k; b.z += dz*k; }
+  }
+}
 function laggedX(p, lag, t){
   const h = p.xHist; for (let i=h.length-1;i>=0;i--) if (t - h[i].t >= lag) return h[i].x;
   return h.length ? h[0].x : p.x;
@@ -1329,27 +1392,55 @@ function endPlay(kind, extra){
   if (gain >= 15) announce("bigRun", {force: true, delay: 0.3});
   else if (kind === "stuffed" || gain <= 0) announce("stuffed", {chance: 0.6, delay: 0.3});
 }
-// tc is when contact happened on screen; with camera delay the call is made LAT later
+/* ---------- contact: a small momentum model ----------
+   Every body is a circle with mass. At contact, the runner's momentum into the defender (more when
+   trucking) is weighed against the defender's momentum into the runner plus his planted strength.
+   Speed is the reward: a fast runner breaks more tackles, knocks defenders back, and falls forward
+   for extra yards. A defender who came in hot overruns a juke; one who broke down is harder to miss.
+   tc is when contact happened on screen; with camera delay the call is made LAT later. */
+const MASS = {DL: 1.4, LB: 1.15, COV: 1.15, DB: 0.9};
+const FORM = {DL: 0.9, LB: 0.85, COV: 0.85, DB: 0.78};      // tackle odds for a square, even-momentum hit
+const REACH = 1.0;                                        // how far a defender's arms reach, center to center
+function runnerVel(p, t){ const h = p.xHist, a = h[h.length - 1], b = h.find(e => t - e.t <= 0.15) || a; const dt = a && b ? a.t - b.t : 0; return {x: dt > 0.03 ? (a.x - b.x)/dt : 0, z: p.speed}; }
 function resolveContact(d, t, tc = t){
-  const g = game, p = g.p, dx = Math.abs(d.x - p.x);
+  const g = game, p = g.p, m = MASS[d.type] || 1.1;
   d.state = "resolved";
   const sinceShoulder = tc - p.lastShoulder, sinceStiff = tc - p.lastStiff, sinceJuke = tc - p.lastJuke;
-  if (sinceShoulder < 0.5 && p.speed > 4.5){
-    const chance = d.type === "DL" ? 0.45 : d.type === "LB" ? 0.72 : 0.88;
-    if (Math.random() < chance){ d.state = "down"; d.vz = 6; p.speed *= 0.72; g.stats.trucks++; g.stats.broken++; sfx.pads(); g.shake = 0.5;
-      banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); crowd(0.3, 1); return; }
-  }
-  const stiffOnHim = !p.stiffSide || Math.abs(d.x - p.x) < 0.5 || Math.sign(d.x - p.x) === p.stiffSide;   // a body stiff arm has to go toward him
-  if (sinceStiff < 0.5 && stiffOnHim && d.type !== "DL"){
-    if (Math.random() < 0.75){ d.state = "down"; d.vx = (d.x < p.x ? -5 : 5); p.speed *= 0.9; g.stats.stiffs++; g.stats.broken++; sfx.pads(); g.shake = 0.3;
-      banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); crowd(0.3, 1); return; }
-  }
-  if (dx > 1.0){
-    d.state = "down"; d.vx = (d.x < p.x ? -3 : 3); sfx.whoosh();
+  const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz) || 0.01, nx = dx/dist, nz = dz/dist;
+  const vr = runnerVel(p, t), runIn = Math.max(0, vr.x*nx + vr.z*nz), defIn = Math.max(0, -(d.vx*nx + d.vz*nz));
+  const truck = sinceShoulder < 0.5 && p.speed > 4;
+  const stiffOnHim = !p.stiffSide || Math.abs(dx) < 0.5 || Math.sign(dx) === p.stiffSide;   // a body stiff arm has to go toward him
+  const stiff = sinceStiff < 0.5 && stiffOnHim;
+  const Pr = runIn*(truck ? 1.8 : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
+  // the whiff: you're past his reach. A defender who came in hot can't redirect.
+  const hot = Math.hypot(d.vx, d.vz) > d.speed*0.85, reach = hot ? REACH*0.8 : REACH;
+  const dive = Math.abs(dx) > reach;                        // just out of reach: he leaves his feet for an arm tackle
+  // Ghost Reps' finish-drill rule: come in hot and a juke makes you miss; break down and you still get a hand on him
+  if (dive && dz > -0.3 && hot && (sinceJuke < 0.8 || Math.random() < 0.5)){
+    d.state = "down"; d.vx = Math.sign(dx)*3; d.vz = d.vz*0.5; sfx.whoosh();
     if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); if (!announce("juke", {chance: 0.5})) say("Juked him!"); crowd(0.3, 1); }
     return;
   }
-  if (dx > 0.7 && p.speed > 7 && Math.random() < 0.3){ d.state = "down"; g.stats.broken++; sfx.pads(); banner("Broke the tackle!", "", 1); return; }
+  let hold = FORM[d.type] ?? 0.75;
+  if (dive) hold *= 0.45;
+  else if (Math.abs(dx) > 0.6 || nz < 0.3) hold *= 0.7;    // an arm tackle from the side or behind
+  hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
+  if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
+  hold = Math.max(hold, 0.25);                             // nobody is untackleable
+  if (Math.random() >= hold){
+    // broken: he's knocked back along the line of the hit, and it costs you some speed
+    const kick = Pr/m*0.8 + 1;
+    d.state = "down"; d.vx = nx*kick + rand(-1, 1); d.vz = nz*kick;
+    p.speed *= clamp(1 - 0.5*Pd/(Pd + Pr), 0.45, 0.85);
+    g.stats.broken++; sfx.pads(); g.shake = truck ? 0.5 : 0.35; crowd(0.3, 1);
+    if (truck){ g.stats.trucks++; banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); }
+    else if (stiff){ g.stats.stiffs++; banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); }
+    else banner(ratio > 1.5 ? "Ran right through him!" : "Broke the tackle!", "", 1);
+    return;
+  }
+  // tackled: a fast runner falls forward for extra yards
+  p.z += clamp((Pr - m*(defIn + 3.0))*0.3, 0, 2.5);
+  d.vx = d.vz = 0;
   sfx.hit(); g.shake = 0.6;
   endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
 }
@@ -1389,17 +1480,19 @@ function updateLive(dt, t){
   updateHandoff(dt, t); updateQB(dt);
   // speed from step cadence
   const sps = stepsPerSec(t);
-  const target = clamp(sps*1.9, 0, 9.3);
+  // speed from cadence: linear up to 4 steps a second, then each extra step buys a bit less, so faster
+  // knees always pay off but there's no cliff where nobody can ever catch you
+  const target = sps <= 4 ? sps*1.9 : Math.min(9.8, 7.6 + (sps - 4)*1.2);
   // the booth notices your knees: slow ones once the play is going, fast ones held for a couple of seconds
   if (-g.t > 1.5 && !p.cadCall){
     if (sps < 2.2) { p.slowFor = (p.slowFor || 0) + dt; if (p.slowFor > 1.2){ p.cadCall = true; announce("slow", {chance: 0.6}); } }
     else if (sps > 5.0) { p.fastFor = (p.fastFor || 0) + dt; if (p.fastFor > 1.8){ p.cadCall = true; announce("fast", {chance: 0.6}); } }
   }
-  p.speed += clamp(target - p.speed, -5*dt, 6*dt);
+  p.speed += clamp(target - p.speed, -5*dt, 4*dt);   // getting back up to speed after a cut or a hit takes a moment
   p.bob += dt*(2 + sps*2.2);
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
-    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*2.3; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.85; sfx.whoosh();
+    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.78; sfx.whoosh();   // a real cut: about a step and a half, and it costs speed
   }
   if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.dip = 1; }
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
@@ -1410,7 +1503,7 @@ function updateLive(dt, t){
   if (p.z < 0 && !g.caught && t - p.lastJuke > 0.4) p.x += clamp(g.play.hole - p.x, -1, 1)*dt*3.2;
   const prevZ = p.z;
   p.z += p.speed*dt;
-  p.xHist.push({t, x:p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
+  p.xHist.push({t, x: p.x, z: p.z}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
   // the line of scrimmage: run through the hole or get stuffed
   if (prevZ < 0 && p.z >= 0 && !p.crossedLOS){ p.crossedLOS = true; p.losAt = t; }
   if (p.losAt != null && t >= p.losAt + LAT()){   // wait out the camera delay so a late cut into the hole still counts
@@ -1432,19 +1525,15 @@ function updateLive(dt, t){
       if (t >= d.contactAt + LAT()){ resolveContact(d, t, d.contactAt); if (g.phase !== "live") return; }
       continue;
     }
-    if (g.t > -d.delay){ continue; }      // g.t counts down from 0 after the snap
-    const lx = laggedX(p, d.react, t);
-    const tx = lx, tz = p.z + p.speed*0.25;
-    const ddx = tx - d.x, ddz = tz - d.z, dist = Math.max(0.01, Math.hypot(ddx, ddz));
-    let vx = ddx/dist*d.speed, vz = ddz/dist*d.speed;
-    vx = clamp(vx, -d.lat, d.lat);
-    // linemen stay in the scrum until they shed the block
-    d.x += vx*dt; d.z += vz*dt; d.vx = vx; d.vz = vz;
-    if (Math.abs(d.z - p.z) < 0.8 && Math.abs(d.x - p.x) < 1.6){
+    moveDefender(d, dt, t);               // g.t counts down from 0 after the snap
+    // contact inside his reach; a dive only when you're getting past him (he's level or behind you)
+    const dd = Math.hypot(d.x - p.x, d.z - p.z);
+    if (g.t <= -d.delay && !d.engaged && (dd < REACH || (dd < REACH + 0.4 && d.z <= p.z + 0.2))){
       if (LAT() > 0){ d.state = "contact"; d.contactAt = t; continue; }
       resolveContact(d, t); if (g.phase !== "live") return;
     }
   }
+  separate(g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact"));
   g.t -= dt;
   // ends of the play
   if (p.z >= g.ballOn){ p.z = g.ballOn; endPlay("td"); return; }
@@ -1489,7 +1578,7 @@ function updateRoute(dt, t){
   // stem: drift to your release lane; after the break, run across the field
   if (rt.broke == null){ if (t - p.lastJuke > 0.3) p.x += clamp(rt.coneX - p.x, -1, 1)*dt*3; p.z += p.speed*dt; }
   else { p.x += pl.dir*Math.min(p.speed, 7)*0.75*dt; p.z += p.speed*0.45*dt; }
-  p.xHist.push({t, x: p.x}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
+  p.xHist.push({t, x: p.x, z: p.z}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
   if (rt.cueAt == null && p.z >= rt.coneZ){ rt.cueAt = t; sfx.breakCue(pl.dir); banner(pl.dir > 0 ? "Break right!" : "Break left!", "", 0.8); }
   // coverage: he trails just inside you; a good break makes him bite and overrun for a moment
   cov.anim += dt*8;
@@ -2550,7 +2639,7 @@ const R3 = (() => {
       if (q) put("home", 7, {x: q.x, z: q.z, face: q.face, fixedFace: true, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach}, q, Math.PI);
       for (const d of g.defenders){
         const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
-        put("away", d.num, {x: d.x, z: d.z, down, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" ? 0.8 : 0}, d, 0);
+        put("away", d.num, {x: d.x, z: d.z, down, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" || d.engaged ? 0.8 : 0}, d, 0);
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
