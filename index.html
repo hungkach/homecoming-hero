@@ -675,34 +675,90 @@ const fmtClock = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2
 const now = () => performance.now()/1000;
 
 /* ============ audio ============ */
-let AC = null, master = null, noiseBuf = null, crowdGain = null;
+// everything is synthesized, so the game needs no sound files
+let AC = null, master = null, noiseBuf = null, crowdGain = null, crowdTone = null;
+const CROWD_BASE = 0.05;
+function pan(node, x){
+  if (!AC.createStereoPanner) return node;
+  const p = AC.createStereoPanner(); p.pan.value = x; node.connect(p); return p;
+}
 function initAudio(){
   try{
     AC = new (window.AudioContext || window.webkitAudioContext)();
-    master = AC.createGain(); master.gain.value = 0.8; master.connect(AC.destination);
+    const comp = AC.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.connect(AC.destination);
+    master = AC.createGain(); master.gain.value = 0.8; master.connect(comp);
     noiseBuf = AC.createBuffer(1, AC.sampleRate*2, AC.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
-    const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
-    const bp = AC.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 0.6;
-    crowdGain = AC.createGain(); crowdGain.gain.value = 0.04;
-    src.connect(bp); bp.connect(crowdGain); crowdGain.connect(master); src.start();
+    buildCrowd();
   }catch(e){ AC = null; }
 }
-function crowd(level, secs){ if (!AC) return; const t = AC.currentTime; crowdGain.gain.cancelScheduledValues(t); crowdGain.gain.setTargetAtTime(level, t, 0.15); if (secs) crowdGain.gain.setTargetAtTime(0.04, t + secs, 0.8); }
-function noise(dur, freq, gain, type="lowpass"){
+// the stands: noise through drifting vowel-like bands, spread left to right, so it reads as many voices
+function buildCrowd(){
+  crowdGain = AC.createGain(); crowdGain.gain.value = CROWD_BASE;
+  crowdTone = AC.createBiquadFilter(); crowdTone.type = "lowpass"; crowdTone.frequency.value = 1400; crowdTone.Q.value = 0.5;
+  crowdTone.connect(crowdGain); crowdGain.connect(master);
+  const vowels = [320, 520, 780, 1100, 1600, 2400];
+  vowels.forEach((f, i) => {
+    const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true; src.playbackRate.value = rand(0.85, 1.15);
+    const bp = AC.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = f; bp.Q.value = rand(1.2, 2.6);
+    const drift = AC.createOscillator(); drift.frequency.value = rand(0.12, 0.6); const dg = AC.createGain(); dg.gain.value = f*0.22;
+    drift.connect(dg); dg.connect(bp.frequency);
+    const amp = AC.createGain(); amp.gain.value = 0.9; const swell = AC.createOscillator(); swell.frequency.value = rand(0.25, 1.4);
+    const sg = AC.createGain(); sg.gain.value = 0.35; swell.connect(sg); sg.connect(amp.gain);
+    src.connect(bp); bp.connect(amp); pan(amp, (i/(vowels.length - 1))*1.6 - 0.8).connect(crowdTone);
+    src.start(0, rand(0, 1.9)); drift.start(); swell.start();
+  });
+  const wash = AC.createBufferSource(); wash.buffer = noiseBuf; wash.loop = true; wash.playbackRate.value = 0.5;
+  const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 500; const wg = AC.createGain(); wg.gain.value = 0.5;
+  wash.connect(lp); lp.connect(wg); wg.connect(crowdTone); wash.start();
+}
+// a short swell to level, then back to the bed; louder crowds also sound brighter
+let crowdHold = 0;
+function crowd(level, secs){
+  if (!AC) return; const t = AC.currentTime;
+  crowdGain.gain.cancelScheduledValues(t); crowdGain.gain.setTargetAtTime(level, t, 0.15);
+  crowdTone.frequency.cancelScheduledValues(t); crowdTone.frequency.setTargetAtTime(900 + level*5000, t, 0.15);
+  crowdHold = now() + (secs || 0.5);
+}
+// the bed follows the game: hushed for the snap count, rising as you break into the open field
+let crowdNextSet = 0;
+function crowdFollow(){
+  if (!AC || !game || now() < crowdHold || now() < crowdNextSet) return;
+  crowdNextSet = now() + 0.25;
+  const g = game, p = g.p;
+  let lvl = CROWD_BASE;
+  if (g.phase === "cadence") lvl = 0.025;
+  else if (g.phase === "live" && g.playType !== "pass") lvl = 0.06 + 0.32*clamp((p.z - 4)/35, 0, 1)*clamp((p.speed - 5)/3, 0, 1);
+  else if (g.phase === "live") lvl = 0.07;
+  const t = AC.currentTime;
+  crowdGain.gain.cancelScheduledValues(t); crowdGain.gain.setTargetAtTime(lvl, t, 0.5);
+  crowdTone.frequency.cancelScheduledValues(t); crowdTone.frequency.setTargetAtTime(900 + lvl*5000, t, 0.5);
+}
+function noise(dur, freq, gain, type="lowpass", delay=0, panX=0){
   if(!AC) return;
   const s = AC.createBufferSource(); s.buffer = noiseBuf;
   const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
-  const g = AC.createGain(); const t = AC.currentTime;
+  const g = AC.createGain(); const t = AC.currentTime + delay;
   g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
-  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t+dur);
+  s.connect(f); f.connect(g); pan(g, panX).connect(master); s.start(t, Math.random()*1.5); s.stop(t+dur);
 }
-function tone(f0, f1, dur, gain, type="sine", delay=0){
+function tone(f0, f1, dur, gain, type="sine", delay=0, panX=0){
   if(!AC) return;
   const o = AC.createOscillator(); o.type = type; const g = AC.createGain(); const t = AC.currentTime + delay;
   o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(f1,20), t+dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t+0.01); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
-  o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.02);
+  o.connect(g); pan(g, panX).connect(master); o.start(t); o.stop(t+dur+0.02);
+}
+// one crowd clap is a few hundred hands: many tiny bursts spread over 30 ms
+function clap(delay, gain = 0.05){ for (let i = 0; i < 9; i++) noise(0.04, rand(1300, 2600), gain*rand(0.6, 1), "bandpass", delay + rand(0, 0.03), rand(-0.8, 0.8)); }
+function drum(delay, gain = 0.5){ tone(120, 48, 0.28, gain, "sine", delay); noise(0.06, 900, gain*0.25, "lowpass", delay); }
+// band brass: detuned saws through a closing filter
+function brass(freqs, delay, dur, gain = 0.07){
+  if (!AC) return; const t = AC.currentTime + delay;
+  const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.setValueAtTime(600, t); lp.frequency.linearRampToValueAtTime(2600, t + 0.06); lp.frequency.exponentialRampToValueAtTime(900, t + dur);
+  const g = AC.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.04); g.gain.setValueAtTime(gain, t + dur*0.7); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  lp.connect(g); g.connect(master);
+  for (const f of freqs) for (const det of [-6, 6]){ const o = AC.createOscillator(); o.type = "sawtooth"; o.frequency.value = f; o.detune.value = det; o.connect(lp); o.start(t); o.stop(t + dur + 0.05); }
 }
 const sfx = {
   whistle(){ if(!AC) return; for (const f of [2950, 3150]){ const o = AC.createOscillator(); o.type = "triangle"; o.frequency.value = f;
@@ -720,12 +776,27 @@ const sfx = {
     const o = AC.createOscillator(), g = AC.createGain(), t0 = AC.currentTime;
     o.type = "sawtooth"; o.frequency.setValueAtTime(300, t0); o.frequency.exponentialRampToValueAtTime(900, t0 + 0.25);
     g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
-    o.connect(g);
-    if (AC.createStereoPanner){ const pn = AC.createStereoPanner(); pn.pan.value = side; g.connect(pn); pn.connect(master); } else g.connect(master);
+    o.connect(g); pan(g, side).connect(master);
     o.start(t0); o.stop(t0 + 0.32);
   },
-  cheer(){ crowd(0.45, 2.5); tone(523, 523, 0.25, 0.12, "square"); tone(659, 659, 0.25, 0.12, "square", 0.18); tone(784, 784, 0.45, 0.12, "square", 0.36); },
-  groan(){ crowd(0.18, 1); tone(220, 110, 0.6, 0.1, "sawtooth"); }
+  // fans whistling through their fingers
+  fanWhistles(n = 3){ for (let i = 0; i < n; i++){ const f = rand(1900, 2600), d = rand(0, 0.9); tone(f*0.8, f, 0.18, 0.04, "sine", d, rand(-0.9, 0.9)); tone(f, f*0.7, 0.45, 0.04, "sine", d + 0.18, rand(-0.9, 0.9)); } },
+  cheer(){ crowd(0.45, 2.5); sfx.fanWhistles(4); brass([392, 494, 587], 0, 0.22); brass([440, 554, 659], 0.2, 0.22); brass([523, 659, 784], 0.4, 0.7); },
+  groan(){ crowd(0.18, 1); if (!AC) return; const t = AC.currentTime; crowdTone.frequency.cancelScheduledValues(t); crowdTone.frequency.setValueAtTime(1600, t); crowdTone.frequency.exponentialRampToValueAtTime(450, t + 1.0); },
+  airHorn(){ if (!AC) return; const t = AC.currentTime;
+    const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2200; const g = AC.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.05); g.gain.setValueAtTime(0.09, t + 1.1); g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+    lp.connect(g); g.connect(master);
+    for (const f of [233, 294, 349]){ const o = AC.createOscillator(); o.type = "sawtooth"; o.frequency.setValueAtTime(f*0.94, t); o.frequency.linearRampToValueAtTime(f, t + 0.08); o.connect(lp); o.start(t); o.stop(t + 1.45); } },
+  touchdown(){ crowd(0.6, 4.5); sfx.airHorn(); sfx.fanWhistles(6);
+    // fight song tag from the band
+    const N = [[523, 659, 784, 0, 0.18], [587, 740, 880, 0.2, 0.18], [659, 784, 988, 0.4, 0.18], [784, 988, 1175, 0.6, 0.9]];
+    for (const [a, b, c, d, len] of N) brass([a/2, b/2, c/2], 1.3 + d, len, 0.08);
+    for (let k = 0; k < 6; k++) drum(1.3 + k*0.2, 0.35); },
+  // between plays the student section starts a chant: drum, drum, then claps
+  chant(){ if (!AC) return; crowd(0.1, 3.4);
+    for (let r = 0; r < 2; r++){ const o = r*1.6; drum(o, 0.4); drum(o + 0.3, 0.4); clap(o + 0.6); clap(o + 0.8); clap(o + 1.0); } },
+  drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
 let lastSpoke = 0;
 function say(text, force){
@@ -988,7 +1059,7 @@ function endPlay(kind, extra){
   g.result = {kind, gain};
   g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain);
   if (kind === "td"){
-    g.home += 7; g.stats.tds++; sfx.cheer(); g.flash = 1.2;
+    g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
     banner("Touchdown!", `${gain} yard run. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
     return;
   }
@@ -1179,7 +1250,7 @@ function endPass(result, why){
   g.result = {kind, gain};
   if (kind !== "sack") g.ball = {t0: now(), dur: 1.0, x0: -1.3, z0: g.p.z + 0.4, x1: rand(-12, 12), z1: kind === "incomplete" ? rand(8, 18) : gain, caught: kind !== "incomplete"};
   if (kind === "td"){
-    g.home += 7; g.stats.tds++; sfx.cheer(); g.flash = 1.2;
+    g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
     banner("Touchdown!", `Clean pocket. ${gain} yard strike. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
   } else if (result === "clean"){ banner("Clean pocket!", `Completed for ${gain}.`, 2.6); say("Clean pocket!"); sfx.cheer(); }
   else if (kind === "pass"){ banner("Hurried throw", `Dumped off for ${gain}.`, 2.4); }
@@ -1250,8 +1321,10 @@ function update(dt){
     if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
   if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
+  crowdFollow();
   if (g.phase === "huddle"){
-    g.t -= dt;
+    const was = g.huddleLen - g.t; g.t -= dt;
+    if (was < 3 && g.huddleLen - g.t >= 3){ if (g.huddleLen >= 8 && Math.random() < 0.6) sfx.chant(); else if (Math.random() < 0.4) sfx.drumline(); }
     if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
   } else if (g.phase === "cadence"){
     g.t -= dt;
@@ -1685,7 +1758,7 @@ $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, set paused(v){ paused = v; }, setup,
+window.__hh = { get game(){ return game; }, input, startTouch, sfx, set paused(v){ paused = v; }, setup,
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();
