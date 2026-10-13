@@ -8,6 +8,7 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 
 | Move | Body | Touch |
 | --- | --- | --- |
+| Take the handoff | Start sprinting at the snap; the QB meets you at the mesh (or pitches on a toss) | Tap fast |
 | Sprint | High knees in place | Tap fast |
 | Juke | Hop left or right | Swipe sideways |
 | Truck | Squat as you hit a tackler | Swipe down |

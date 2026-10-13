@@ -828,6 +828,8 @@ const sfx = {
   breakCue(side){ tone(1400, 1400, 0.07, 0.25, "square", 0, side*0.8); tone(1800, 1800, 0.09, 0.25, "square", 0.1, side*0.8); },
   // ball in the air: a rising whoosh that peaks right as it arrives, so you can catch by ear
   incoming(dur){ tone(260, 1100, dur, 0.14, "triangle"); noise(dur, 1800, 0.12, "bandpass"); },
+  // ball into your gut: a soft leather thump
+  handoff(){ tone(170, 80, 0.12, 0.35, "sine"); noise(0.06, 900, 0.18, "bandpass"); },
   drumline(){ if (!AC) return; for (let k = 0; k < 8; k++){ noise(0.05, 3200, k % 2 ? 0.05 : 0.08, "bandpass", k*0.15, -0.3); if (k % 4 === 0) drum(k*0.15, 0.3); } }
 };
 // voice: the device's best English voice unless one was picked. Premium and Enhanced voices are
@@ -1084,6 +1086,9 @@ function startHuddle(newDrive){
   input.steps = []; input.juke = 0; input.shoulder = input.stiff = input.punch = false;
   g.p.x = Math.abs(g.play.hole) > 3 && !g.play.pass ? clamp(g.play.hole*0.45, -3.2, 3.2) : 0;   // the handoff angle points you at the hole
   spawnDefense();
+  // run plays start with the QB under center; you get the ball at the mesh (or on a pitch for a toss)
+  g.qb = g.playType === "run" ? {x: 0, z: -1.5, face: Math.PI, anim: 0, run: 0, reach: 0} : null;
+  g.hand = {state: g.playType === "run" ? "qb" : "rb", t: 0, x: 0, y: 1.1, z: -1.5};
   if (g.playType === "pass") setupPassPro();
   if (g.playType === "route") setupRoute();
   updateBoard();
@@ -1170,9 +1175,40 @@ function resolveContact(d, t, tc = t){
   sfx.hit(); g.shake = 0.6;
   endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
 }
+// the exchange: the QB opens to the hole side and meets you at the mesh, or pitches the toss
+function updateHandoff(dt, t){
+  const g = game, p = g.p, q = g.qb, h = g.hand; if (!q || h.state === "rb") return;
+  const live = -g.t, side = g.play.hole >= 0 ? 1 : -1, toss = Math.abs(g.play.hole) > 5;
+  q.anim += dt*8;
+  if (h.state === "qb"){
+    if (toss){
+      q.face = Math.PI - side*1.6; q.reach = clamp(live/0.25, 0, 1);
+      if (live > 0.25){ h.state = "air"; h.t = t; h.from = {x: q.x + side*0.4, z: q.z}; }
+    } else {
+      const mx = side*0.75, mz = -2.9, dx = mx - q.x, dz = mz - q.z, d = Math.hypot(dx, dz);
+      if (d > 0.05){ const st = Math.min(d, 5.5*dt); q.x += dx/d*st; q.z += dz/d*st; q.run = 1; } else q.run = 0;
+      q.face = Math.PI - side*2.4; q.reach = clamp(live/0.3, 0, 1);
+      if (Math.hypot(p.x - q.x, p.z - q.z) < 1.25 || live > 1.1){ h.state = "rb"; h.t = t; sfx.handoff(); }
+    }
+    h.x = q.x + side*0.35; h.y = 1.1; h.z = q.z - 0.2;
+  }
+  if (h.state === "air"){   // the pitch leads you
+    const u = clamp((t - h.t)/0.45, 0, 1), tx = p.x + side*0.3, tz = p.z + 0.6;
+    h.x = lerp(h.from.x, tx, u); h.z = lerp(h.from.z, tz, u); h.y = 1.0 + Math.sin(u*Math.PI)*0.9;
+    if (u >= 1){ h.state = "rb"; h.t = t; sfx.handoff(); }
+  }
+}
+// after the exchange the QB carries out his fake, away from the play
+function updateQB(dt){
+  const g = game, q = g.qb; if (!q || g.hand.state !== "rb") return;
+  const side = g.play.hole >= 0 ? 1 : -1, tx = -side*2.5, tz = -4.5, dx = tx - q.x, dz = tz - q.z, d = Math.hypot(dx, dz);
+  q.anim += dt*8; q.reach = Math.max(0, q.reach - dt*3);
+  if (d > 0.1){ const st = Math.min(d, 4*dt); q.x += dx/d*st; q.z += dz/d*st; q.run = 0.8; q.face = Math.atan2(dx, -dz); } else q.run = 0;
+}
 function updateLive(dt, t){
   const g = game, p = g.p;
   g.stats.work += dt;
+  updateHandoff(dt, t); updateQB(dt);
   // speed from step cadence
   const sps = stepsPerSec(t);
   const target = clamp(sps*1.9, 0, 9.3);
@@ -1665,6 +1701,8 @@ function drawPlayers(c, t){
       items.push({z: dlZ, x, draw: () => figure(c, x, dlZ, {jersey: COL.away, trim: "#f2e6d0", num: 90 + i, crouch: 0.4, anim: t*6 + i*2})});
     }
   }
+  const q = g.qb;
+  if (q && g.phase !== "opp") items.push({z: q.z, x: q.x, draw: () => figure(c, q.x, q.z, {jersey: COL.home, trim: COL.gold, num: 7, back: Math.cos(q.face) < 0, anim: q.anim*q.run})});
   for (const d of g.defenders){
     if (g.phase === "opp") break;
     items.push({z: d.z, x: d.x, draw: () => figure(c, d.x, d.z, {jersey: COL.away, trim: "#f2e6d0", num: d.num, down: d.state === "down" || (d.state === "resolved" && g.phase === "dead"), anim: (g.phase === "live" ? d.anim : 0), crouch: d.crouch ?? (g.phase === "live" ? 0 : 0.25)})});
@@ -1778,8 +1816,19 @@ function drawSelf(c, t){
   if (g.playType === "route"){ drawRouteSelf(c, t); return; }
   const p = g.p, sp = Math.min(1, p.speed/6), u = Math.min(W, H);
   const bob = Math.sin(p.bob)*u*0.03*sp;
-  // carrying arm and ball, bottom right
-  cx.save(); cx.translate(W*0.72, H + u*0.02 - bob);
+  // before the exchange: make a pocket, top arm across your chest, bottom arm low, waiting for the ball
+  if (g.hand && g.hand.state !== "rb"){
+    for (const [x0, y0, rot] of [[W*0.62, H + u*0.02 - u*0.22, -1.25], [W*0.46, H + u*0.08, -0.15]]){
+      cx.save(); cx.translate(x0, y0 - bob); cx.rotate(rot);
+      cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.075, -u*0.14, u*0.15, u*0.28, u*0.05); cx.fill();
+      cx.fillStyle = COL.skin; cx.beginPath(); cx.roundRect(-u*0.06, -u*0.23, u*0.12, u*0.11, u*0.04); cx.fill();
+      cx.restore();
+    }
+    return;
+  }
+  // carrying arm and ball, bottom right; right after the exchange it tucks in from your chest
+  const tuck = g.hand ? clamp((now() - g.hand.t)/0.25, 0, 1) : 1, tk = 1 - (1 - tuck)*(1 - tuck);
+  cx.save(); cx.translate(lerp(W*0.5, W*0.72, tk), H + u*0.02 - bob - (1 - tk)*u*0.18);
   cx.rotate(-0.25);
   cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.12, -u*0.22, u*0.26, u*0.3, u*0.05); cx.fill();
   cx.fillStyle = COL.ball; cx.beginPath(); cx.ellipse(-u*0.02, -u*0.24, u*0.13, u*0.075, -0.3, 0, 7); cx.fill();
@@ -1868,6 +1917,10 @@ function render(t){
     drawField(c);
     drawPlayers(c, t);
     if (game && game.ball) drawBall(c, t);
+    if (game && game.hand && game.hand.state !== "rb" && game.phase !== "opp"){
+      const h = game.hand, q = proj(c, h.x, h.y, h.z);
+      if (q){ cx.fillStyle = COL.ball; cx.beginPath(); cx.ellipse(q.x, q.y, Math.max(3, q.s*0.28), Math.max(2, q.s*0.16), -0.4, 0, 7); cx.fill(); }
+    }
   }
   drawCues(c, t, !in3D);
   cx.restore();
@@ -2251,6 +2304,8 @@ const R3 = (() => {
     // ball in the air
     const b = g && g.ball && (g.ball.caught || t - g.ball.t0 <= g.ball.dur + 0.25) ? g.ball : null;
     ballMesh.visible = !!b;
+    const h = g && g.hand && g.hand.state !== "rb" && g.phase !== "opp" ? g.hand : null;
+    if (h && !b){ ballMesh.visible = true; ballMesh.position.set(h.x, h.y, -h.z); ballMesh.rotation.set(0, 0.6, h.state === "air" ? t*14 : 0); }
     if (b){ const u = clamp((t - b.t0)/b.dur, 0, 1), z = lerp(b.z0, b.z1, u), x = lerp(b.x0, b.x1, u), y = 2 + Math.sin(u*Math.PI)*(3 + Math.abs(b.z1 - b.z0)*0.25);
       ballMesh.position.set(x, y, -z); ballMesh.rotation.set(0, Math.atan2(b.x1 - b.x0, -(b.z1 - b.z0)) + Math.PI/2, t*14); }
     renderer.render(scene, cam);
@@ -2271,6 +2326,8 @@ const R3 = (() => {
         let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
         put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0});
       }
+      const q = g.qb;
+      if (q) put("home", 7, {x: q.x, z: q.z, face: q.face, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach});
       for (const d of g.defenders){
         const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
         const moving = live && Math.hypot(d.vx, d.vz) > 0.5;
