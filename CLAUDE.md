@@ -7,7 +7,7 @@ First-person running back fitness game played with your body in front of a phone
 - Everything the game needs lives in `index.html`. No build step, no extra runtime files. Scripts load only from CDNs.
 - The shared tracking code is the `body core v0.3` `<script>` block, between its start and end markers. Keep it free of game globals so it can be copied into other games (Stomp City, Downhill, a wrestling game, a vigilante game). If you change the core, bump the version in both markers and in `VERSION`.
 - Touch play must keep working in every build. It's how Mark tests on his phone, and it must behave the same unless a change is meant for touch.
-- One commit per feature, pushed to `main`. Pages redeploys in a minute or two, and Mark refreshes the link.
+- One commit per feature, pushed to `main`. Update the build stamp at the bottom of the start screen (`buildStamp`) with the date and a word or two about the latest change, so Mark can tell when Safari is showing an old copy. Pages redeploys in a minute or two, and Mark refreshes the link.
 - Writing in the UI, commits, and replies: sentence case, no em dashes, no all caps for emphasis.
 - Play is audio-first and glanceable: big shapes, color flashes, spoken calls. No reading text mid-play.
 - Phone or tablet only. A TV is a bonus, never required, and no accessories.
