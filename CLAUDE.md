@@ -5,7 +5,7 @@ First-person running back fitness game played with your body in front of a phone
 ## Rules
 
 - Everything the game needs lives in `index.html`. No build step, no extra runtime files. Scripts load only from CDNs.
-- The shared tracking code is the `body core v0.1` `<script>` block, between its start and end markers. Keep it free of game globals so it can be copied into other games (Stomp City, Downhill, a wrestling game, a vigilante game). If you change the core, bump the version in both markers and in `VERSION`.
+- The shared tracking code is the `body core v0.2` `<script>` block, between its start and end markers. Keep it free of game globals so it can be copied into other games (Stomp City, Downhill, a wrestling game, a vigilante game). If you change the core, bump the version in both markers and in `VERSION`.
 - Touch play must keep working in every build. It's how Mark tests on his phone, and it must behave the same unless a change is meant for touch.
 - One commit per feature, pushed to `main`. Pages redeploys in a minute or two, and Mark refreshes the link.
 - Writing in the UI, commits, and replies: sentence case, no em dashes, no all caps for emphasis.
@@ -29,14 +29,14 @@ node tests/camera_test.js index.html           # living room fallback chain and 
 node tests/full_game.js index.html good        # full touch game with an autopilot (also: lazy)
 node tests/pass_test.js index.html good        # forced pass plays (also: nopunch, nostance, lazy)
 node tests/route_test.js index.html good       # forced route plays (also: nobreak, wrongway, nohands, lazy)
-node tests/startup_test.js index.html living_room 2.3 0.3   # setup, move test, latency, play; add "pass" for pass pro or "route" for routes
+node tests/startup_test.js index.html living_room 2.3 0.3   # setup, warm-up, latency, play; add "pass" or "route"; MISS=duck,jump skips moves to test the third round
 ```
 
 These are simulations. They prove the logic, not how real tracking feels. Thresholds get tuned from Mark's playtest notes.
 
 ## Status
 
-Done: body core v0.1, six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd and band, best-voice picker, iOS playback audio session.
+Done: body core v0.2 (adds arm raise, duck, jump), six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd and band, best-voice picker, iOS playback audio session.
 
 The 3D view and the crowd can't be checked by the Node tests. Check them in Chromium with Playwright (pre-installed in cloud sessions), serving three.js from npm because the CDN may be blocked there.
 

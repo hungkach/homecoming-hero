@@ -11,14 +11,14 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Take the handoff | Start sprinting at the snap; the QB meets you at the mesh (or pitches on a toss) | Tap fast |
 | Sprint | High knees in place | Tap fast |
 | Juke | Hop left or right | Swipe sideways |
-| Truck | Squat as you hit a tackler | Swipe down |
-| Stiff arm | Snap one arm straight out | Swipe up |
+| Truck | Duck your head and shoulder as you hit a tackler | Swipe down |
+| Stiff arm | Raise one arm out to the side the tackler is on | Swipe up |
 | Pass pro: shuffle | Hop toward the blitzer | Swipe toward him |
 | Pass pro: stance | Hold a quarter squat | Hold a thumb down |
-| Pass pro: punch | Both hands out together | Tap |
+| Pass pro: block | Both arms out to the sides together | Tap |
 | Route: run it | High knees | Tap fast |
 | Route: break | Hop toward the break when it beeps at the cone | Swipe toward the break |
-| Route: catch | Both hands out as the ring closes | Swipe up |
+| Route: catch | Jump (or both arms up) as the ring closes | Swipe up |
 
 On 3rd and 5 or more, the call is either pass pro or a route.
 
@@ -41,11 +41,11 @@ Pick "Play with body." Phones get one question: watch on this phone, or on your 
 
 Distances vary by device. Living room tries the back ultra-wide lens first, then the main back camera (upright, knees-up at about 3 ft), then the front camera on the phone screen.
 
-## Startup (every session, about 30 seconds)
+## Startup (every session, about a minute)
 
 1. **Framing check.** Live camera view with spoken coaching (step back, step closer, step left or right, tilt up or down) until you fit with a little margin. Full-body setups also check that your hands fit overhead.
-2. **Move test.** Stand tall, high knees, hop left, hop right, squat, stiff arm. Each move's trigger is set to 60 percent of your own peak.
-3. **Latency check.** Four clicks to count in, then a stiff arm on each of the next four beats. The measured delay (camera plus TV mirroring) is subtracted from every timing window.
+2. **Warm-up.** Two rounds of every move: high knees, hop left, hop right, squat (first round only), truck, stiff arm left, stiff arm right, block, jump. Anything the camera still missed gets a short third round. Each trigger is set to 60 percent of your weakest round that still showed the move, so it fires on a tired rep too.
+3. **Latency check.** Four clicks to count in, then one arm out to the side on each of the next four beats. The measured delay (camera plus TV mirroring) is subtracted from every timing window.
 
 ## How it's built
 
@@ -53,8 +53,8 @@ Distances vary by device. Living room tries the back ultra-wide lens first, then
 - The stadium, field, and players are 3D (three.js from a CDN): tiered stands with a crowd that jumps on big plays, light towers, a live scoreboard, goal posts, and fireworks on touchdowns. Your hands, timing rings, and the camera view stay 2D on top. Without WebGL, or with `?2d` added to the link, the game draws the flat 2D view instead. In body play, if tracking drops under 20 fps, the 3D view lowers its resolution, then falls back to 2D.
 - All sound is synthesized: a stadium crowd that hushes for the snap count and builds as you break into the open, chants, a band, and an air horn. Spoken calls use the best English voice on the device, and you can pick one on the start screen.
 - Body tracking uses MediaPipe Pose Landmarker (lite model, capped at 30 fps) from a CDN.
-- The shared tracking lives in one marked `<script>` block, **body core v0.1**, so it can be copied into other games:
+- The shared tracking lives in one marked `<script>` block, **body core v0.2**, so it can be copied into other games:
   - Body heights (hip drop, knee rise) come from image landmarks, in torso lengths. Angles and arm heights come from world landmarks, measured against the "up" direction learned while you stand tall. Knee angle is never used.
   - Every trigger has three cues, fires when 2 of 3 cross their threshold, needs 2 of 3 to drop back before it can fire again, and has a 250 ms refractory window.
-  - Triggered moves: step, hop, level change, punch, rip, swim, arms overhead. Continuous signals: stance, cadence, lateral offset, shoulder turn.
+  - Triggered moves: step, hop, level change, duck, jump, arm raise (left or right), punch, rip, swim, arms overhead. Arm raises are measured in the picture's plane, which the camera sees best; punches toward the camera track poorly up close. Continuous signals: stance, cadence, lateral offset, shoulder turn.
   - The game calls `BodyCore.update()` every frame, drains events with `BodyCore.drain()`, and reads `BodyCore.state`.

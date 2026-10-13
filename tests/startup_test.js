@@ -44,9 +44,18 @@ function knees(P, t){ const ph = t*2.3*Math.PI*2; thigh(P, "l", Math.max(0, Math
 function punchL(P, k){ P.lEl = [0.2 - 0.03*k, -0.3 - 0.17*k, -0.15 - 0.16*k]; P.lWr = [0.15, -0.45, -0.28 - 0.34*k]; }
 function punch(P, k){ P.rEl = [-0.2 + 0.03*k, -0.3 - 0.17*k, -0.15 - 0.16*k]; P.rWr = [-0.15, -0.45, -0.28 - 0.34*k]; }
 function guard(P){ P.lEl = [0.2, -0.3, -0.15]; P.lWr = [0.15, -0.45, -0.28]; punch(P, 0); }
+// lateral raise to shoulder height (person frame: +x is the person's left)
+function raiseArm(P, side, k){ const sh = P[side + "Sh"], sx = side === "l" ? 1 : -1, a = k*Math.PI/2*0.95;
+  P[side + "El"] = [sh[0] + sx*0.26*Math.sin(a), sh[1] + 0.26*Math.cos(a), 0]; P[side + "Wr"] = [sh[0] + sx*0.5*Math.sin(a), sh[1] + 0.5*Math.cos(a), 0]; }
+const armPulse = u => u < 0 ? 0 : u < 0.2 ? ease(u/0.2) : u < 0.5 ? 1 : 1 - ease((u - 0.5)/0.25);
+function duck(P, k){ for (const j of ["nose","lEar","rEar"]) P[j] = [P[j][0], P[j][1] + 0.22*k, P[j][2] - 0.22*k];
+  for (const j of ["lSh","rSh","lEl","rEl","lWr","rWr"]) P[j] = [P[j][0], P[j][1] + 0.14*k, P[j][2] - 0.12*k]; thigh(P, "l", 15*k); thigh(P, "r", 15*k); }
+const jumpUp = u => u > 0 && u < 0.45 ? -0.18*Math.sin(Math.PI*u/0.45) : 0;
 function overhead(P){ P.lEl = [0.25, -0.82, 0]; P.rEl = [-0.25, -0.82, 0]; P.lWr = [0.25, -1.1, 0]; P.rWr = [-0.25, -1.1, 0]; }
 
 // director: what the simulated player does, based on what the game shows
+const seenSteps = new Set();
+let moveN = 0, armAt = -9, armSide = "r", duckAt = -9;
 let passSeen = false, camH = 0, offX = -0.7, phaseLog = [], lastPhase = "", stepStart = 0, lastStep = -1, hopFrom = 0, hopAt = -9, hopDir = 0, lastJukeAt = -9, playsSeen = 0;
 function director(t){
   const S = HH.setup, P = standing(); let off = {x: offX, y: 0};
@@ -56,18 +65,28 @@ function director(t){
     if (t > 2.0) offX += (0 - offX)*0.08;           // walks to center after being told
     const c = S.frame && S.frame.code; if (c === 'tiltUp') camH -= 0.004; if (c === 'tiltDown') camH += 0.004;   // tilts the camera when told
     if (S.phase === "reach") overhead(P);
-    if (S.phase === "movetest"){
+    if (S.phase === "movetest" && S.cur){
       if (S.step !== lastStep){ lastStep = S.step; stepStart = t; }
-      const u = t - stepStart - 0.35;                 // reaction time to the spoken prompt
-      if (S.step === 1 && u > 0) knees(P, u);
-      if (S.step === 2) off.x = offX + 0.38*ease(u/0.25);            // hop left = person's +x
-      if (S.step === 3) off.x = offX + 0.38*(1 - ease(u/0.25))*(u < 0 ? 1 : 1) - 0.38*ease((u)/0.25) + 0.38*ease(u/0.25) - 0.38*ease(u/0.25);
-      if (S.step === 4 && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
-      if (S.step === 5){ guard(P); punch(P, ease(u/0.12)); }
+      const u = t - stepStart - 0.35, id = S.cur.id;   // reaction time to the spoken prompt
+      // MISS=duck,jump makes the simulated player skip those moves in rounds 1 and 2, to exercise the third round
+      const skip = (process.env.MISS || "").split(",").includes(id) && S.cur.round <= 2;
+      if (skip) {}
+      else if (id === "knees" && u > 0) knees(P, u);
+      else if (id === "hopL") off.x = offX + 0.38*ease(u/0.25);            // hop left = person's +x
+      else if (id === "squat" && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
+      else if (id === "duck") duck(P, armPulse(u));
+      else if (id === "raiseL") raiseArm(P, "l", armPulse(u));
+      else if (id === "raiseR") raiseArm(P, "r", armPulse(u));
+      else if (id === "raiseB"){ raiseArm(P, "l", armPulse(u)); raiseArm(P, "r", armPulse(u)); }
+      else if (id === "jump") off.y = jumpUp(u);
+      if (id === "hopL" && u > 1.1) offX += 0.38;   // stays where the hop landed
+      if (id === "hopR") off.x = offX - 0.38*ease(u/0.25);
+      if (id === "hopR" && u > 1.1) offX -= 0.38;
+      if (id !== "hopL" && id !== "hopR") off.x = offX;
+      seenSteps.add(id + (S.cur.round || 0));
     }
-    if (S.phase === "latIntro") guard(P);
-    if (S.phase === "latency"){ guard(P);
-      for (let i = 4; i < 8; i++){ const u = t - (S.beats[i] + EXTRA + 0.02); if (u > -0.05 && u < 0.6){ punch(P, ease(u/0.12)*(u < 0.35 ? 1 : 1 - ease((u - 0.35)/0.2))); } } }
+    if (S.phase === "latency"){
+      for (let i = 4; i < 8; i++){ const u = t - (S.beats[i] + EXTRA + 0.02); if (u > -0.05 && u < 0.6) raiseArm(P, "r", armPulse(u*1.6)); } }
   } else if (HH.game && HH.game.playType === "route"){
     // route: high knees, hop toward the break when the cue shows, both hands out as the ring closes (all seen EXTRA late)
     const g = HH.game, rt = g.rt;
@@ -75,7 +94,7 @@ function director(t){
       knees(P, t);
       if (rt.cueAt != null && !rt._cut){ rt._cut = true; hopAt = t + 0.15 + EXTRA; hopDir = g.play.dir; hopFrom = offX; }
       if (rt.arriveAt != null && !rt._ht){ rt._ht = rt.arriveAt - 0.1 + EXTRA; }
-      if (rt._ht){ const u = t - rt._ht, k = ease(u/0.12)*(u < 0.4 ? 1 : 1 - ease((u - 0.4)/0.2)); if (u > 0){ punch(P, k); punchL(P, k); } }
+      if (rt._ht) off.y = jumpUp(t - rt._ht);
     }
     const hu = t - hopAt; if (hu > 0 && hu < 0.25) off.x = hopFrom - hopDir*0.38*ease(hu/0.25); else if (hu >= 0.25 && hu < 1.2) off.x = hopFrom - hopDir*0.38*(1 - ease((hu - 0.25)/0.9));
   } else if (HH.game && HH.game.playType === "pass"){
@@ -92,7 +111,7 @@ function director(t){
       if (pp._shuf){ const hu = t - pp._shuf; if (hu > 0) x -= pp._dir*0.38*ease(hu/0.25); }
       if (pp._mir){ const hu = t - pp._mir; if (hu > 0) x -= pp.counterSide*0.38*ease(hu/0.25); }
       off.x = offX + x;
-      if (pp._pt){ const u = t - pp._pt, k = ease(u/0.12)*(u < 0.4 ? 1 : 1 - ease((u - 0.4)/0.2)); if (u > 0){ punch(P, k); punchL(P, k); } }
+      if (pp._pt){ const u = t - pp._pt; raiseArm(P, "l", armPulse(u)); raiseArm(P, "r", armPulse(u)); }
     }
     passSeen = true;
   } else if (HH.game){
@@ -101,23 +120,31 @@ function director(t){
       // run on screen events as the player sees them, EXTRA seconds late
       knees(P, t);
       const p = g.p, th = g.defenders.find(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact" && p.z > 0 && d.z > p.z && d.z - p.z < 2.6 && Math.abs(d.x - p.x) < 1.3);
-      if (th && t - lastJukeAt > 1.2){ lastJukeAt = t; hopAt = t + EXTRA; hopDir = th.x > p.x ? 1 : -1; hopFrom = offX; }
+      // rotate through the three moves: juke away, stiff arm toward him, truck
+      if (th && t - lastJukeAt > 1.2){ lastJukeAt = t; const k = moveN++ % 3, side = th.x > p.x ? 1 : -1;
+        if (k === 0){ hopAt = t + EXTRA; hopDir = -side; hopFrom = offX; }
+        else if (k === 1){ armAt = t + EXTRA; armSide = side > 0 ? "r" : "l"; }
+        else duckAt = t + EXTRA; }
     }
     if (g.phase === "dead" && g._counted !== true){ g._counted = true; }
+    if (t > armAt && t - armAt < 0.8) raiseArm(P, armSide, armPulse(t - armAt));
+    if (t > duckAt && t - duckAt < 0.8) duck(P, armPulse(t - duckAt));
     // hop: person's right is -x; game dir +1 = player's right
     const hu = t - hopAt; if (hu > 0 && hu < 0.25) off.x = hopFrom - hopDir*0.38*ease(hu/0.25); else if (hu >= 0.25 && hu < 1.2) off.x = hopFrom - hopDir*0.38*(1 - ease((hu - 0.25)/0.9)); 
   }
   return frame(P, off);
 }
+const tally = {};
+{ const d0 = BodyCore.drain; BodyCore.drain = () => { const e = d0(); if (HH.game && !HH.setup.active) for (const x of e) tally[x.type + (x.side || "")] = (tally[x.type + (x.side || "")] || 0) + 1; return e; }; }
 (async () => {
   HH.testBody(KEY);
   let errors = 0, framingSays = new Set();
-  for (let i = 0; i < 60*120; i++){
+  for (let i = 0; i < 60*180; i++){
     ms += 1000/60; const t = ms/1000;
     if (i % 2 === 0){ const f = director(t); BodyCore.feed(f.img, f.wld, t, VW, VH); }
     try { rafCb(ms); } catch(e){ errors++; if (errors < 4) console.error("frame error", e.stack.split("\n").slice(0, 3).join(" | ")); }
     if (HH.setup.active && HH.setup.frame && !HH.setup.frame.ok) framingSays.add(HH.setup.frame.code);
-    if (HH.game && (HH.game.stats.carries >= 4 || HH.game.stats.passPro >= 6 || HH.game.stats.targets >= 5)) break;
+    if (HH.game && (HH.game.stats.carries >= 8 || HH.game.stats.passPro >= 6 || HH.game.stats.targets >= 5)) break;
   }
   const g = HH.game;
   console.log("mode", KEY, "dist", D, "extra delay", EXTRA, "| errors", errors);
@@ -125,6 +152,8 @@ function director(t){
   console.log("framing coached:", [...framingSays].join(", "));
   console.log("spoken:", spoken.slice(0, 14).join(" | "));
   console.log("final coach line:", els.calibMsg.textContent);
+  console.log("game events:", JSON.stringify(tally));
+  console.log("warm-up steps:", [...seenSteps].join(" "));
   console.log("latency set to", Math.round(BodyCore.latency*1000), "ms");
-  if (g) console.log("game:", JSON.stringify({carries: g.stats.carries, yards: g.stats.yards, steps: g.stats.steps, jukes: g.stats.jukes, broken: g.stats.broken, passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks, targets: g.stats.targets, catches: g.stats.catches, recYards: g.stats.recYards}));
+  if (g) console.log("game:", JSON.stringify({carries: g.stats.carries, yards: g.stats.yards, steps: g.stats.steps, jukes: g.stats.jukes, trucks: g.stats.trucks, stiffs: g.stats.stiffs, moves: moveN, broken: g.stats.broken, passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks, targets: g.stats.targets, catches: g.stats.catches, recYards: g.stats.recYards}));
 })();

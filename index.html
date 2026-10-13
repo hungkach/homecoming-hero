@@ -118,8 +118,8 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     <dl class="moves">
       <dt>Sprint</dt><dd>High knees in place. Faster knees, faster run.</dd><span class="tap">tap fast</span>
       <dt>Juke</dt><dd>Hop left or right as a tackler closes in.</dd><span class="tap">swipe sideways</span>
-      <dt>Truck</dt><dd>Squat to lower your shoulder right before contact.</dd><span class="tap">swipe down</span>
-      <dt>Stiff arm</dt><dd>Punch one arm straight out at a tackler.</dd><span class="tap">swipe up</span>
+      <dt>Truck</dt><dd>Duck your head and shoulder right before contact.</dd><span class="tap">swipe down</span>
+      <dt>Stiff arm</dt><dd>Raise one arm out to the side the tackler is on.</dd><span class="tap">swipe up</span>
     </dl>
     <p class="note">Touch play works anywhere. Body play needs the game opened from its own https link, with the phone propped about 4 feet away so your head to knees are in frame.</p>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
@@ -707,8 +707,8 @@ const PLAYS = [
   {name:"Toss sweep right", hole: 7, say:"Toss sweep right. Get to the edge."},
   {name:"Toss sweep left", hole:-7, say:"Toss sweep left. Get to the edge."}
 ];
-// 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, punch on contact, anchor.
-// 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, hands out for the catch.
+// 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, both arms out on contact, anchor.
+// 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, go up for the catch.
 const ROUTE_PLAYS = [
   {name: "Angle route right", route: true, dir: 1, lane: -1.5, stem: 4, hole: 99, say: "Angle route right. Sprint to the cone, then break right."},
   {name: "Angle route left", route: true, dir: -1, lane: 1.5, stem: 4, hole: 99, say: "Angle route left. Sprint to the cone, then break left."},
@@ -973,7 +973,7 @@ const CALLS = {
     "Moving the sticks! And the glutes!"],
   sack: ["Sacked! Lower stance next time. Think quarter squat, not quarter pounder.",
     "Sack! The quarterback would like a word, and maybe a chiropractor.",
-    "Ooh, he got home. Sit lower, punch earlier!"],
+    "Ooh, he got home. Sit lower, get your arms out earlier!"],
   clean: ["Clean pocket! That block was a wall sit with attitude!",
     "What a pickup! The quarterback could have read a novel back there!"],
   catch: ["Soft hands, strong core!", "Caught it in stride! Now turn on the afterburners!"],
@@ -1067,15 +1067,26 @@ window.addEventListener("keydown", e => {
 window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keyStance = false; });
 
 /* ============ startup sequence: framing check, move test, latency check ============ */
-const MOVE_TEST = [
-  {big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }},
-  {big: "High knees!", small: "Sprint in place.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
-  {big: "Hop left", small: "", say: "Hop left.", secs: 1.6, cap: ["hop"]},
-  {big: "Hop right", small: "", say: "Hop right.", secs: 1.6, cap: ["hop"]},
-  {big: "Squat", small: "Drop your hips and hold.", say: "Squat.", secs: 2.0, cap: ["level"]},
-  {big: "Stiff arm!", small: "Punch one arm straight out.", say: "Stiff arm. Punch one arm out.", secs: 1.6, cap: ["punch"]},
+// The warm-up: two rounds of every move, so each trigger is tuned to a tired rep, not just the first one.
+// Anything still not caught after two rounds gets a short third round.
+const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }};
+const WARM_MOVES = [
+  {id: "knees", big: "High knees!", small: "Sprint in place.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
+  {id: "hopL", big: "Hop left", small: "", say: "Hop left.", secs: 1.6, cap: ["hop"]},
+  {id: "hopR", big: "Hop right", small: "", say: "Hop right.", secs: 1.6, cap: ["hop"]},
+  {id: "squat", big: "Squat", small: "Drop your hips and hold.", say: "Squat.", secs: 2.0, cap: ["level"], once: true},
+  {id: "duck", big: "Truck!", small: "Duck your head and shoulder.", say: "Truck! Duck your head and shoulder.", secs: 1.8, cap: ["duck"]},
+  {id: "raiseL", big: "Stiff arm left", small: "Left arm out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
+  {id: "raiseR", big: "Stiff arm right", small: "Right arm out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
+  {id: "raiseB", big: "Block!", small: "Both arms out to the sides.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
+  {id: "jump", big: "Jump!", small: "Jump up like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
-const MOVE_NAMES = {step: "high knees", hop: "hop", level: "squat", punch: "stiff arm"};
+const MOVE_NAMES = {step: "high knees", hop: "hop", level: "squat", duck: "truck", raise: "arm raise", jump: "jump"};
+const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
+function warmPlan(){
+  return [WARM_STAND, roundIntro(1, "Every move once."), ...WARM_MOVES.map(m => ({...m, round: 1})),
+    roundIntro(2, "Same moves again."), ...WARM_MOVES.filter(m => !m.once).map(m => ({...m, round: 2}))];
+}
 const BEAT = 0.9;
 const setup = {active: false, phase: null, full: true, okFor: 0, lastCode: "", lastSay: 0, step: 0, stepT: 0, stepLen: 1, beats: [], heard: [], hits: [], frame: null, note: ""};
 function coach(big, small){ $("calibTitle").textContent = big; $("calibMsg").textContent = small || ""; }
@@ -1115,7 +1126,7 @@ function updateSetup(dt){
       if (S.okFor >= 1){ BodyCore.calibrateStand(0.8); S.phase = "reach"; S.okFor = camMode.frame === "full" ? 0 : 99; S.lastCode = ""; }
     } else if (S.okFor >= 0.5){
       coach("Locked in", ""); sayCoach("ok", "Locked in.");
-      if (S.full){ S.phase = "movetest"; S.step = -1; S.stepT = 1.2; S.stepLen = 1.2; }
+      if (S.full){ S.phase = "movetest"; S.step = -1; S.stepT = 1.2; S.stepLen = 1.2; S.plan = warmPlan(); S.extra = false; S.cur = null; }
       else { S.phase = "stand"; S.stepT = S.stepLen = 2; coach("Stand tall", "Resetting your center."); }
     }
     return;
@@ -1127,17 +1138,25 @@ function updateSetup(dt){
   }
   if (S.phase === "movetest"){
     S.stepT -= dt;
+    // capture starts a beat into each step, so the tail of the last move doesn't count for this one
+    if (S.capNext && S.stepLen - S.stepT >= 0.3){ BodyCore.captureStart(S.capNext.cap, S.capNext.round || 0); S.capNext = null; }
     if (S.stepT > 0) return;
-    const cur = MOVE_TEST[S.step];
+    const cur = S.plan[S.step];
     if (cur){ BodyCore.captureStop(); if (cur.end) cur.end(); }
-    const next = MOVE_TEST[++S.step];
-    if (next){ S.stepT = S.stepLen = next.secs; BodyCore.captureStart(next.cap); coach(next.big, next.small); say(next.say, true); return; }
+    if (S.step + 1 >= S.plan.length && !S.extra){
+      // after two rounds, a third round for anything the camera still hasn't caught
+      S.extra = true;
+      const seen = BodyCore.movesSeen(), again = WARM_MOVES.filter(m => !m.once && !seen[m.cap[0]]);
+      if (again.length) S.plan.push(roundIntro(3, `Just the ${[...new Set(again.map(m => MOVE_NAMES[m.cap[0]]))].join(", ")}.`), ...again.map(m => ({...m, round: 3})));
+    }
+    const next = S.cur = S.plan[++S.step];
+    if (next){ S.stepT = S.stepLen = next.secs; S.capNext = next.cap ? next : null; coach(next.big, next.small); say(next.say, true); return; }
     const seen = BodyCore.applyMoveTest();
     const missed = Object.keys(MOVE_NAMES).filter(k => !seen[k]).map(k => MOVE_NAMES[k]);
-    S.note = missed.length ? `Didn't catch your ${missed.join(", ")}, so those use standard settings.` : "All four moves tuned to you.";
+    S.note = missed.length ? `Didn't catch your ${missed.join(", ")}, so those use standard settings.` : "All six moves tuned to you.";
     S.phase = "latIntro"; S.stepT = S.stepLen = 3.4;
-    coach("Punch on the beat", "Four clicks to count in, then a stiff arm on each of the next four beats.");
-    say("Punch on the beat. Four counts, then punch on every beat.", true);
+    coach("Arm out on the beat", "Four clicks to count in, then one arm out to the side on each of the next four beats.");
+    say("Arm out on the beat. Four counts, then one arm out on every beat.", true);
     return;
   }
   if (S.phase === "latIntro"){
@@ -1154,9 +1173,9 @@ function updateSetup(dt){
   if (S.phase === "latency"){
     S.stepT -= dt;
     const passed = S.beats.filter(b => t >= b).length;
-    coach(passed === 0 ? "Ready" : passed <= 4 ? String(passed) : "Punch!", passed <= 4 ? "Counting in..." : `Beat ${passed - 4} of 4`);
+    coach(passed === 0 ? "Ready" : passed <= 4 ? String(passed) : "Arm out!", passed <= 4 ? "Counting in..." : `Beat ${passed - 4} of 4`);
     if (S.stepT > 0) return;
-    // match each punch beat to the nearest punch the camera saw; the median gap is camera plus screen delay
+    // match each beat to the nearest arm raise the camera saw; the median gap is camera plus screen delay
     const deltas = [];
     for (const b of S.heard.slice(4)){
       let best = null;
@@ -1167,7 +1186,7 @@ function updateSetup(dt){
     if (deltas.length >= 2){
       deltas.sort((x, y) => x - y); const m = deltas.length >> 1;
       L = deltas.length % 2 ? deltas[m] : (deltas[m - 1] + deltas[m])/2; note = `Delay measured at ${Math.round(Math.max(0, L)*1000)} ms.`;
-    } else { L = camMode.key === "living_room" ? 0.35 : 0.15; note = `Couldn't time your punches, so using a typical ${Math.round(L*1000)} ms delay.`; }
+    } else { L = camMode.key === "living_room" ? 0.35 : 0.15; note = `Couldn't time your arm raises, so using a typical ${Math.round(L*1000)} ms delay.`; }
     BodyCore.setLatency(L);
     S.phase = "done"; S.stepT = S.stepLen = 2.4;
     coach("You're set", `${S.note} ${note}`); say("You're set.", true);
@@ -1183,17 +1202,19 @@ function finishSetup(){
 // turn body core events into game input; tEff already has the measured delay taken off
 function pumpBody(){
   for (const e of BodyCore.drain()){
-    if (setup.active){ if (setup.phase === "latency" && e.type === "punch") setup.hits.push(e.t); continue; }
+    if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t);
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }
-    else if (e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }
-    else if (e.type === "punch"){
-      if (game.playType === "pass" || game.playType === "route"){   // pass pro punch and the catch are both hands together
+
+    else if (e.type === "duck"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck
+    else if (e.type === "raise"){
+      if (game.playType === "pass"){   // the pass pro block is both arms out together
         handPunch[e.side] = e.tEff;
-        if (Math.abs(handPunch.L - handPunch.R) < 0.3){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
-      } else { input.stiff = true; input.stiffT = e.tEff; }
+        if (Math.abs(handPunch.L - handPunch.R) < 0.35){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
+      } else if (game.playType === "run"){ input.stiff = true; input.stiffT = e.tEff; input.stiffSide = e.side === "R" ? 1 : -1; }   // stiff arm toward that side
     }
+    else if ((e.type === "jump" || e.type === "overhead") && game.playType === "route"){ input.punch = true; input.punchT = e.tEff; }   // the catch
   }
 }
 const handPunch = {L: -9, R: -9};
@@ -1254,8 +1275,8 @@ function startHuddle(newDrive){
 function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
   const steps = g.playType === "route"
-    ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Hop to break"], ["🙌", touch ? "Swipe up to catch" : "Both hands out to catch"]]
-    : [["↔️", touch ? "Swipe toward the blitzer" : "Hop to the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👊", touch ? "Tap to punch" : "Punch with both hands"]];
+    ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Hop to break"], ["🙌", touch ? "Swipe up to catch" : "Jump to catch"]]
+    : [["↔️", touch ? "Swipe toward the blitzer" : "Hop to the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👐", touch ? "Tap to punch" : "Both arms out to block"]];
   $("pcTag").textContent = `${ord(g.down)} and ${g.toGo >= g.ballOn ? "goal" : g.toGo}`;
   $("pcName").textContent = g.play.name;
   $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");
@@ -1318,7 +1339,8 @@ function resolveContact(d, t, tc = t){
     if (Math.random() < chance){ d.state = "down"; d.vz = 6; p.speed *= 0.72; g.stats.trucks++; g.stats.broken++; sfx.pads(); g.shake = 0.5;
       banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); crowd(0.3, 1); return; }
   }
-  if (sinceStiff < 0.5 && d.type !== "DL"){
+  const stiffOnHim = !p.stiffSide || Math.abs(d.x - p.x) < 0.5 || Math.sign(d.x - p.x) === p.stiffSide;   // a body stiff arm has to go toward him
+  if (sinceStiff < 0.5 && stiffOnHim && d.type !== "DL"){
     if (Math.random() < 0.75){ d.state = "down"; d.vx = (d.x < p.x ? -5 : 5); p.speed *= 0.9; g.stats.stiffs++; g.stats.broken++; sfx.pads(); g.shake = 0.3;
       banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); crowd(0.3, 1); return; }
   }
@@ -1380,8 +1402,8 @@ function updateLive(dt, t){
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*2.3; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.85; sfx.whoosh();
   }
   if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.dip = 1; }
-  if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; }
-  input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null;
+  if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
+  input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; input.stiffSide = 0;
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
   // drift toward the called hole before the line, like following your blockers
@@ -1432,7 +1454,7 @@ function updateLive(dt, t){
 
 /* ============ route running ============ */
 // The middle linebacker covers you. Sprint to the cone, hop toward the break when it beeps, and he bites.
-// The ball is in the air as the ring closes; both hands out on arrival. A catch turns into a normal run.
+// The ball is in the air as the ring closes; jump (body) or swipe up (touch) on arrival. A catch turns into a normal run.
 const THROW_FLIGHT = 0.85;
 function setupRoute(){
   const g = game, pl = g.play;
@@ -1503,7 +1525,7 @@ function updateRoute(dt, t){
     const sep = Math.hypot(cov.x - p.x, cov.z - p.z);
     const hands = rt.handsT >= rt.arriveAt - 0.4 && rt.handsT <= rt.arriveAt + 0.2;
     const chance = hands ? (sep > 1.6 ? 0.95 : sep > 0.9 ? 0.75 : 0.4) : (sep > 1.6 ? 0.2 : 0.08);
-    if (Math.random() >= chance) return endRoute(!hands ? "Get your hands out as it arrives." : "Broken up. He was right on you.");
+    if (Math.random() >= chance) return endRoute(!hands ? "Go up for it as it arrives." : "Broken up. He was right on you.");
     // caught: now it's a run
     g.caught = true; g.ball = null; g.playType = "run"; p.crossedLOS = true; cov.type = "LB"; cov.state = "read";
     p.speed *= 0.4;   // the catch breaks your stride
@@ -1515,7 +1537,7 @@ function endRoute(why){
   const g = game; if (g.phase !== "live") return;
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
   g.result = {kind: "incomplete", gain: 0};
-  banner("Incomplete", why, 2.4); sfx.groan(); if (/hands/.test(why)) announce("drop", {chance: 0.8, delay: 0.5});
+  banner("Incomplete", why, 2.4); sfx.groan(); if (/arrives/.test(why)) announce("drop", {chance: 0.8, delay: 0.5});
 }
 
 /* ============ pass protection ============ */
@@ -1989,6 +2011,9 @@ function drawSelf(c, t){
     }
     return;
   }
+  // the ball lives in the arm away from your last stiff arm; mirror the view when it's in your left
+  const mirror = p.ballSide === -1;
+  if (mirror){ cx.save(); cx.translate(W, 0); cx.scale(-1, 1); }
   // carrying arm and ball, bottom right; right after the exchange it tucks in from your chest
   const tuck = g.hand ? clamp((now() - g.hand.t)/0.25, 0, 1) : 1, tk = 1 - (1 - tuck)*(1 - tuck);
   cx.save(); cx.translate(lerp(W*0.5, W*0.72, tk), H + u*0.02 - bob - (1 - tk)*u*0.18);
@@ -1999,11 +2024,11 @@ function drawSelf(c, t){
   for (let i=0;i<4;i++){ const lx = -u*0.06 + i*u*0.03; cx.beginPath(); cx.moveTo(lx, -u*0.27 + i*0.003*u); cx.lineTo(lx + u*0.005, -u*0.24 + i*0.003*u); cx.stroke(); }
   cx.fillStyle = COL.skin; cx.beginPath(); cx.ellipse(u*0.07, -u*0.2, u*0.06, u*0.045, 0, 0, 7); cx.fill();
   cx.restore();
-  // free arm pumps, or punches out for a stiff arm
+  // free arm pumps, or shoots out to the side for a stiff arm
   const pump = Math.sin(p.bob + Math.PI)*u*0.05*sp;
   const ext = p.stiffAnim;
-  cx.save(); cx.translate(W*0.24 + ext*W*0.12, H + u*0.06 - pump - ext*H*0.22);
-  cx.rotate(0.2 - ext*0.2);
+  cx.save(); cx.translate(W*0.24 - ext*W*0.08, H + u*0.06 - pump - ext*H*0.24);
+  cx.rotate(0.2 - ext*0.75);
   cx.fillStyle = COL.home; cx.beginPath(); cx.roundRect(-u*0.07, -u*0.12, u*0.14, u*0.24, u*0.04); cx.fill();
   cx.fillStyle = COL.skin; cx.beginPath(); cx.roundRect(-u*0.055, -u*0.2 - ext*u*0.06, u*0.11, u*0.1 + ext*u*0.06, u*0.03); cx.fill();
   cx.restore();
@@ -2012,6 +2037,7 @@ function drawSelf(c, t){
     cx.fillStyle = COL.homeDark; cx.globalAlpha = Math.min(1, p.dip*1.5);
     cx.beginPath(); cx.ellipse(W*0.38, H*1.02, W*0.42, H*0.16*p.dip + 10, -0.15, 0, 7); cx.fill(); cx.globalAlpha = 1;
   }
+  if (mirror) cx.restore();
   // speed streaks
   if (g.phase === "live" && p.speed > 7){
     cx.strokeStyle = "rgba(255,255,255,.18)"; cx.lineWidth = 2;
