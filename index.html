@@ -140,7 +140,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 13, studio voices</p>
+    <p class="diag" id="buildStamp">Build: Oct 13, studio voices with progress</p>
   </div>
 </div>
 
@@ -1050,7 +1050,7 @@ const Studio = (() => {
   const VOICE = {coach: "am_michael", booth: "af_heart"}, SPEED = {coach: 1.0, booth: 1.08};
   const CACHE = "hh-studio-v1";
   const clips = new Map(), wanted = new Map();
-  let worker = null, state = "off", progress = 0, err = "", busyKey = null, made = 0;
+  let worker = null, state = "off", progress = 0, err = "", busyKey = null, made = 0, fails = 0, lastErr = "", genAt = 0, genSecs = [];
   const who = booth => booth ? "booth" : "coach";
   const key = (text, booth) => who(booth) + "|" + text;
   const url = k => "https://studio.homecoming.hero/" + encodeURIComponent(k);
@@ -1110,16 +1110,19 @@ const Studio = (() => {
     if (m.type === "progress") progress = m.total ? m.loaded/m.total : 0;
     else if (m.type === "ready"){ state = "ready"; prewarm(); }
     else if (m.type === "error"){ state = "failed"; err = "Studio voices didn't load (" + m.msg.slice(0, 80) + "). Using device voices."; }
-    else if (m.type === "clip"){ const c = {sr: m.sr, pcm: m.pcm}; clips.set(m.key, c); save(m.key, c); wanted.delete(m.key); busyKey = null; made++; }
-    else if (m.type === "genError"){ wanted.delete(m.key); busyKey = null; }
+    else if (m.type === "clip"){ const c = {sr: m.sr, pcm: m.pcm}; clips.set(m.key, c); save(m.key, c); wanted.delete(m.key); busyKey = null; made++;
+      genSecs.push(now() - genAt); if (genSecs.length > 10) genSecs.shift(); }
+    else if (m.type === "genError"){ wanted.delete(m.key); busyKey = null; fails++; lastErr = m.msg.slice(0, 60); }
   }
   // lines are made in the gaps, never while timing matters
   const quiet = () => !(game && (game.phase === "live" || game.phase === "cadence")) && !(setup.active && (setup.phase === "movetest" || setup.phase === "latIntro" || setup.phase === "latency"));
   function tick(){
+    // a watchdog: if one line takes over 2 minutes, the device can't run the engine
+    if (state === "ready" && busyKey && now() - genAt > 120){ try{ worker.terminate(); }catch(e){} state = "failed"; busyKey = null; err = "Studio voices stalled on this device. Using device voices."; return; }
     if (state !== "ready" || busyKey || !wanted.size || !quiet()) return;
     let best = null; for (const [k, w] of wanted) if (!best || w.pri < best.pri) best = w;
     if (clips.has(best.key)){ wanted.delete(best.key); return; }
-    busyKey = best.key;
+    busyKey = best.key; genAt = now();
     worker.postMessage({type: "gen", key: best.key, text: best.text, voice: VOICE[best.who], speed: SPEED[best.who]});
   }
   function want(text, booth, pri = 0){
@@ -1146,7 +1149,12 @@ const Studio = (() => {
     if (!enabled()) return "";
     if (state === "loading") return progress > 0 ? `Studio voices: downloading ${Math.round(progress*100)} percent` : (clips.size ? `Studio voices: ${clips.size} lines saved, starting the voice engine` : "Studio voices: starting the download");
     if (state === "failed") return err;
-    if (state === "ready") return wanted.size ? `Studio voices: ${clips.size} lines ready, making the rest` : `Studio voices: all ${clips.size} lines ready`;
+    if (state === "ready"){
+      const avg = genSecs.length ? genSecs.reduce((a, b) => a + b, 0)/genSecs.length : 0;
+      const pace = busyKey ? ` Making the next one (${Math.round(now() - genAt)} s so far${avg ? `, about ${avg.toFixed(1)} s a line` : ""}).` : avg ? ` About ${avg.toFixed(1)} s a line.` : "";
+      const bad = fails ? ` ${fails} failed: ${lastErr}` : "";
+      return (wanted.size ? `Studio voices: ${clips.size} lines ready, ${wanted.size} to go.` : `Studio voices: all ${clips.size} lines ready.`) + pace + bad;
+    }
     return "";
   }
   return {start, tick, want, status, clip: (text, booth) => enabled() ? clips.get(key(text, booth)) || null : null, get state(){ return state; }, get made(){ return made; }, get busy(){ return !!busyKey; }};
