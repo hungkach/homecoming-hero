@@ -136,14 +136,309 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 </div>
 
 <script>
+/* =====================================================================
+   body core v0.1  (start)
+   Shared camera body tracking for the body arcade games.
+   Copy this whole <script> block into another game. It uses no game
+   globals; the game reads BodyCore.state, drains BodyCore events, and
+   calls BodyCore.update() once per animation frame.
+   ===================================================================== */
+const BodyCore = (() => {
+  "use strict";
+  const VERSION = "0.1";
+  const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+  const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+  const TARGET_FPS = 30;
+  const REFRACTORY = 0.25;     // seconds a trigger stays quiet after it fires
+  const LM = {nose:0, lSh:11, rSh:12, lEl:13, rEl:14, lWr:15, rWr:16, lHip:23, rHip:24, lKn:25, rKn:26, lAn:27, rAn:28};
+
+  /* ---------- small math ---------- */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const sub = (a, b) => ({x: a.x - b.x, y: a.y - b.y, z: (a.z || 0) - (b.z || 0)});
+  const dot = (a, b) => a.x*b.x + a.y*b.y + a.z*b.z;
+  const len = a => Math.hypot(a.x, a.y, a.z);
+  const norm = a => { const l = len(a) || 1; return {x: a.x/l, y: a.y/l, z: a.z/l}; };
+  const neg = a => ({x: -a.x, y: -a.y, z: -a.z});
+  const angDeg = (a, b) => Math.acos(clamp(dot(norm(a), norm(b)), -1, 1))*180/Math.PI;
+  const mid2 = (a, b) => ({x: (a.x + b.x)/2, y: (a.y + b.y)/2});
+  const mid3 = (a, b) => ({x: (a.x + b.x)/2, y: (a.y + b.y)/2, z: (a.z + b.z)/2});
+
+  /* ---------- tracker ---------- */
+  let landmarker = null, video = null, stream = null, camInfo = null;
+  let lastDetectMs = 0, lastVideoTime = -1, fpsTimes = [];
+  async function load(status){
+    if (landmarker) return;
+    if (status) status("Loading the body tracker...");
+    const vision = await import(`${MP_URL}/vision_bundle.mjs`);
+    const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+    const make = delegate => vision.PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: {modelAssetPath: MODEL_URL, delegate}, runningMode: "VIDEO", numPoses: 1,
+      minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5});
+    try { landmarker = await make("GPU"); } catch(e){ landmarker = await make("CPU"); }
+  }
+    async function openCamera(videoEl){
+    video = videoEl; stop();
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: "user", width: {ideal: 640}, height: {ideal: 480}, aspectRatio: {ideal: 4/3}, frameRate: {ideal: 30}}});
+    video.srcObject = stream; await video.play();
+    const tr = stream.getVideoTracks()[0];
+    camInfo = {label: tr.label || "Camera", width: video.videoWidth, height: video.videoHeight};
+    return camInfo;
+  }
+
+  function update(){
+    if (!landmarker || !video || video.readyState < 2) return false;
+    const ms = performance.now();
+    if (ms - lastDetectMs < 1000/TARGET_FPS - 3) return false;   // cap at 30 fps
+    if (video.currentTime === lastVideoTime) return false;
+    lastVideoTime = video.currentTime; lastDetectMs = ms;
+    let res; try { res = landmarker.detectForVideo(video, ms); } catch(e){ return false; }
+    fpsTimes.push(ms); while (fpsTimes.length && ms - fpsTimes[0] > 1000) fpsTimes.shift();
+    if (!res || !res.landmarks || !res.landmarks[0]) return false;
+    ingest(res.landmarks[0], res.worldLandmarks && res.worldLandmarks[0], ms/1000, video.videoWidth || 640, video.videoHeight || 480);
+    return true;
+  }
+
+  /* ---------- pose state ---------- */
+  let img = null, wld = null, vw = 640, vh = 480, lastPoseAt = -9;
+  const hist = [];      // derived frames, last 0.8 s
+  const recent = [];    // smoothed raw frames, last 2 s, for calibration
+  const base = {ok: false, torso: 0, cx: 0, hipY: 0, shY: 0, knY: [0, 0], up: {x: 0, y: -1, z: 0}, pitch: [0, 0], yaw: 0};
+  const state = {visible: false, stance: 0, depth: 0, cadence: 0, lateral: 0, turn: 0, overhead: false, overheadSince: 0};
+  let events = [], latency = 0, stepTimes = [], squatRef = 0.35;
+  const lastHop = {dir: 0, t: -9};
+
+  function smooth(dst, src, a){
+    if (!dst || dst.length !== src.length) return src.map(p => ({x: p.x, y: p.y, z: p.z || 0, v: p.visibility ?? 1}));
+    for (let i = 0; i < src.length; i++){ const d = dst[i], p = src[i];
+      d.x += a*(p.x - d.x); d.y += a*(p.y - d.y); d.z += a*((p.z || 0) - d.z); d.v = p.visibility ?? 1; }
+    return dst;
+  }
+  const seen = i => { const p = img[i]; return p.v >= 0.5 && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1; };
+  const px = i => ({x: img[i].x*vw, y: img[i].y*vh});
+
+  /* ---------- features (one per tracked frame) ----------
+     Body heights (hip drop, knee rise) come from image landmarks, scaled
+     by torso length; world landmarks are hip-centered, so they can't see the
+     hips drop. Arm heights are measured in world space, relative to the shoulders.
+     Angles come from world landmarks (meters), measured against the
+     "up" direction learned while standing tall, so camera tilt matters less.
+     Knee angle is never used: ankles leave frame in knees-up modes. */
+  function features(t){
+    const sh = mid2(px(LM.lSh), px(LM.rSh)), hip = mid2(px(LM.lHip), px(LM.rHip));
+    const T = base.ok ? base.torso : Math.max(1, Math.hypot(sh.x - hip.x, sh.y - hip.y));
+    const cx = base.ok ? base.cx : hip.x;
+    const F = {t, T, ok: seen(LM.lSh) && seen(LM.rSh) && seen(LM.lHip) && seen(LM.rHip)};
+    F.lat = (cx - hip.x)/T;                                   // + is the player's right
+    F.hipDrop = base.ok ? (hip.y - base.hipY)/T : 0;
+    F.shDrop = base.ok ? (sh.y - base.shY)/T : 0;
+    const kn = [px(LM.lKn), px(LM.rKn)], an = [px(LM.lAn), px(LM.rAn)];
+    F.knOK = [seen(LM.lKn), seen(LM.rKn)];
+    F.ankOK = seen(LM.lAn) && seen(LM.rAn);
+    F.kneeRise = [0, 1].map(s => base.ok ? (base.knY[s] - kn[s].y)/T : 0);
+    F.kneeLead = [(kn[1].y - kn[0].y)/T, (kn[0].y - kn[1].y)/T];
+    F.lowKnee = (cx - (kn[0].x + kn[1].x)/2)/T;
+    F.lowAnk = (cx - (an[0].x + an[1].x)/2)/T;
+    F.wrOK = [img[LM.lWr].v >= 0.3, img[LM.rWr].v >= 0.3];
+    const up = base.up;
+    if (wld){
+      const W = i => wld[i];
+      const hipW = [W(LM.lHip), W(LM.rHip)], knW = [W(LM.lKn), W(LM.rKn)];
+      F.pitchAbs = [0, 1].map(s => angDeg(sub(knW[s], hipW[s]), neg(up)));   // thigh pitch from vertical
+      F.pitch = [0, 1].map(s => F.pitchAbs[s] - (base.ok ? base.pitch[s] : 0));
+      const d = sub(W(LM.rSh), W(LM.lSh));
+      F.yawAbs = Math.atan2(d.z, -d.x);
+      F.turn = F.yawAbs - (base.ok ? base.yaw : 0);           // + is turning to the player's right
+      F.arm = [0, 1].map(s => {
+        const S = W(s ? LM.rSh : LM.lSh), E = W(s ? LM.rEl : LM.lEl), Wr = W(s ? LM.rWr : LM.lWr);
+        const v = sub(Wr, S), vUp = dot(v, up);
+        const horiz = len({x: v.x - vUp*up.x, y: v.y - vUp*up.y, z: v.z - vUp*up.z});
+        return {ext: len(v)/Math.max(0.05, len(sub(E, S)) + len(sub(Wr, E))), reach: horiz, upAng: angDeg(v, up)};
+      });
+      // arm heights in world torso lengths along "up": perspective can't fake these the way
+      // a fist punched toward a close camera looks like it rises in the picture
+      const shW = mid3(W(LM.lSh), W(LM.rSh)), tW = Math.max(0.2, len(sub(shW, mid3(hipW[0], hipW[1]))));
+      const right = norm(d), nose = W(LM.nose);
+      F.wrUp = [LM.lWr, LM.rWr].map(i => dot(sub(W(i), shW), up)/tW);
+      F.wrAboveNose = [LM.lWr, LM.rWr].map(i => dot(sub(W(i), nose), up)/tW);
+      F.elUp = [LM.lEl, LM.rEl].map(i => dot(sub(W(i), shW), up)/tW);
+      F.wrSide = [LM.lWr, LM.rWr].map(i => dot(sub(W(i), shW), right)/tW);   // + is toward the player's right
+    } else {
+      F.pitchAbs = [0, 0]; F.pitch = [0, 0]; F.yawAbs = 0; F.turn = 0;
+      F.arm = [{ext: 0, reach: 0, upAng: 90}, {ext: 0, reach: 0, upAng: 90}];
+      F.wrUp = [-1, -1]; F.wrAboveNose = [-2, -2]; F.elUp = [-0.5, -0.5]; F.wrSide = [0, 0];
+    }
+    return F;
+  }
+  function pastFrame(F, dt){ for (let i = hist.length - 1; i >= 0; i--) if (F.t - hist[i].t >= dt) return hist[i]; return hist[0] || F; }
+  function rate(F, dt, fn){ const P = pastFrame(F, dt), d = F.t - P.t; return d > 0.02 ? (fn(F) - fn(P))/d : 0; }
+  function delta(F, dt, fn){ return fn(F) - fn(pastFrame(F, dt)); }
+
+  /* ---------- triggers ----------
+     Every trigger has three cues. It fires when 2 of 3 cues cross their
+     "on" value, then stays quiet until 2 of 3 drop below "off"
+     (hysteresis), and never fires twice within 250 ms (refractory). */
+  const TRIGGERS = [];
+  function trigger(type, side, cues, opts = {}){
+    for (const c of cues) c.def = {on: c.on, off: c.off};
+    const tr = {type, side, cues, gate: opts.gate, info: opts.info, need: 2, refractory: REFRACTORY, active: false, lastFire: -9, vals: [0, 0, 0]};
+    TRIGGERS.push(tr); return tr;
+  }
+  const S2 = [0, 1], SIDE = ["L", "R"];
+  // knee lift: one step of the march
+  for (const s of S2){ const o = 1 - s;
+    trigger("step", SIDE[s], [
+      {id: "pitch", on: 35, off: 18, calib: true, fn: F => wld && F.knOK[s] ? F.pitch[s] : null},
+      {id: "rise", on: 0.16, off: 0.07, calib: true, fn: F => F.knOK[s] ? F.kneeRise[s] : null},
+      {id: "lead", on: 0.14, off: 0.05, calib: true, fn: F => F.knOK[s] && F.knOK[o] ? F.kneeLead[s] : null}
+    ]);
+  }
+  // hop: the whole body shifts sideways, feet included (a lean moves only the shoulders)
+  const hopDir = F => Math.sign(delta(F, 0.25, G => G.lat)) || 1;
+  function lowerShift(F){
+    const P = pastFrame(F, 0.25);
+    if (F.ankOK && P.ankOK) return (F.lowAnk - P.lowAnk)*hopDir(F);
+    if (F.knOK[0] && F.knOK[1] && P.knOK[0] && P.knOK[1]) return (F.lowKnee - P.lowKnee)*hopDir(F);
+    return null;
+  }
+  trigger("hop", null, [
+    {id: "speed", on: 1.5, off: 0.5, calib: true, fn: F => F.ok ? rate(F, 0.15, G => G.lat)*hopDir(F) : null},
+    {id: "shift", on: 0.3, off: 0.1, calib: true, fn: F => F.ok ? Math.abs(delta(F, 0.25, G => G.lat)) : null},
+    {id: "feet", on: 0.25, off: 0.08, calib: true, fn: lowerShift}
+  ], {
+    gate: (F, tr) => {
+      const d = hopDir(F);
+      if (d === -lastHop.dir && F.t - lastHop.t < 0.8) return false;                  // the bounce back after a hop
+      const P = pastFrame(F, 0.25), returning = Math.abs(F.lat) < Math.abs(P.lat) && Math.abs(P.lat) > 0.3;
+      return !returning || tr.vals[0] >= tr.cues[0].on;                                // heading home only counts if it's explosive
+    },
+    info: F => { const d = hopDir(F); lastHop.dir = d; lastHop.t = F.t; return {dir: d}; }
+  });
+  // level change: hips and shoulders drop and both thighs pitch forward
+  trigger("level", null, [
+    {id: "drop", on: 0.2, off: 0.08, calib: true, fn: F => F.ok ? F.hipDrop : null},
+    {id: "bend", on: 25, off: 10, calib: true, fn: F => wld && F.knOK[0] && F.knOK[1] ? Math.min(F.pitch[0], F.pitch[1]) : null},
+    {id: "duck", on: 0.2, off: 0.08, calib: true, fn: F => F.ok ? F.shDrop : null}
+  ]);
+  // punch (also the stiff arm): arm snaps straight and reaches out, not up or down
+  for (const s of S2) trigger("punch", SIDE[s], [
+    {id: "straight", on: 0.88, off: 0.75, calib: false, fn: F => wld && F.wrOK[s] ? F.arm[s].ext : null},
+    {id: "snap", on: 1.4, off: 0.3, calib: true, fn: F => wld && F.wrOK[s] ? rate(F, 0.1, G => G.arm[s].ext) : null},
+    {id: "reach", on: 0.42, off: 0.28, calib: true, fn: F => wld && F.wrOK[s] ? F.arm[s].reach : null}
+  ], {gate: F => F.arm[s].upAng > 50 && F.arm[s].upAng < 140});
+  // rip and swim: block-shedding arm moves
+  const startedLow = (F, s) => hist.some(P => F.t - P.t <= 0.5 && P.wrUp[s] < -0.75);
+  const lift = (F, s) => rate(F, 0.12, G => G.wrUp[s]);
+  const wristSpeed = (F, s) => { const P = pastFrame(F, 0.12), d = F.t - P.t; return d > 0.02 ? Math.hypot(F.wrUp[s] - P.wrUp[s], F.wrSide[s] - P.wrSide[s])/d : 0; };
+  for (const s of S2){ const o = 1 - s;
+    trigger("rip", SIDE[s], [
+      {id: "lift", on: 2.5, off: 0.8, calib: false, fn: F => wld && F.wrOK[s] ? lift(F, s) : null},
+      {id: "high", on: 0.05, off: -0.2, calib: false, fn: F => wld && F.wrOK[s] ? F.wrUp[s] : null},
+      {id: "elbow", on: -0.1, off: -0.4, calib: false, fn: F => wld ? F.elUp[s] : null}
+    ], {gate: F => startedLow(F, s) && lift(F, o) < 1.2 && !(F.wrAboveNose[o] > 0.15)});   // both arms rising is overhead, not a rip
+    trigger("swim", SIDE[s], [
+      {id: "over", on: 0.15, off: -0.05, calib: false, fn: F => wld && F.wrOK[s] ? F.wrAboveNose[s] : null},
+      {id: "cross", on: 0.15, off: -0.1, calib: false, fn: F => wld && F.wrOK[s] ? (s === 0 ? F.wrSide[s] : -F.wrSide[s]) : null},
+      {id: "speed", on: 2.0, off: 0.6, calib: false, fn: F => wld && F.wrOK[s] ? wristSpeed(F, s) : null}
+    ], {gate: F => !(F.wrAboveNose[o] > 0.15)});
+  }
+  // both arms overhead
+  trigger("overhead", null, [
+    {id: "left", on: 0.25, off: 0.05, calib: false, fn: F => wld && F.wrOK[0] ? F.wrAboveNose[0] : null},
+    {id: "right", on: 0.25, off: 0.05, calib: false, fn: F => wld && F.wrOK[1] ? F.wrAboveNose[1] : null},
+    {id: "elbows", on: 0.2, off: 0, calib: false, fn: F => wld ? (F.elUp[0] + F.elUp[1])/2 : null}
+  ]);
+
+  function runTrigger(tr, F){
+    const vals = tr.cues.map(c => { const v = c.fn(F); return v == null || !isFinite(v) ? null : v; });
+    tr.vals = vals;
+    if (!base.ok) return;
+    let on = 0, off = 0;
+    vals.forEach((v, i) => { if (v == null) return; if (v >= tr.cues[i].on) on++; if (v <= tr.cues[i].off) off++; });   // missing data is unknown, not off
+    if (!tr.active){
+      if (on >= tr.need && F.t - tr.lastFire >= tr.refractory && (!tr.gate || tr.gate(F, tr))){
+        tr.active = true; tr.lastFire = F.t;
+        const e = Object.assign({type: tr.type, side: tr.side, t: F.t, tEff: F.t - latency, cues: on}, tr.info ? tr.info(F) : null);
+        events.push(e);
+        if (tr.type === "step") stepTimes.push(F.t);
+        if (tr.type === "overhead"){ state.overhead = true; state.overheadSince = F.t; }
+      }
+    } else if (off >= tr.need){
+      tr.active = false;
+      if (tr.type === "overhead") state.overhead = false;
+    }
+  }
+
+  /* ---------- continuous signals ---------- */
+  function updateContinuous(F){
+    state.visible = F.ok;
+    state.lateral = F.lat;                                   // torso lengths, + is the player's right
+    state.depth = F.hipDrop;                                 // hip drop in torso lengths
+    state.stance = clamp(F.hipDrop/squatRef, 0, 1.5);        // 1 = the squat from the move test
+    state.turn = F.turn;                                     // shoulder turn in radians, + is right
+    while (stepTimes.length && F.t - stepTimes[0] > 1.5) stepTimes.shift();
+    state.cadence += (stepTimes.length/1.5 - state.cadence)*0.2;   // steps per second
+  }
+
+  function ingest(rawImg, rawWorld, t, w, h){
+    if (w){ vw = w; vh = h; }
+    img = smooth(img, rawImg, 0.6);
+    if (rawWorld) wld = smooth(wld, rawWorld, 0.5);
+    lastPoseAt = t;
+    recent.push({t, img: img.map(p => ({x: p.x, y: p.y, v: p.v})), wld: wld ? wld.map(p => ({x: p.x, y: p.y, z: p.z})) : null});
+    while (recent.length && t - recent[0].t > 2) recent.shift();
+    const F = features(t);
+    hist.push(F); while (hist.length && t - hist[0].t > 0.8) hist.shift();
+    updateContinuous(F);
+    for (const tr of TRIGGERS) runTrigger(tr, F);
+  }
+
+  /* ---------- standing baseline ---------- */
+  function calibrateStand(secs = 1.2){
+    const frames = recent.filter(r => lastPoseAt - r.t <= secs);
+    if (frames.length < 5) return false;
+    const n = frames.length;
+    const avgI = i => ({x: frames.reduce((s, r) => s + r.img[i].x, 0)/n*vw, y: frames.reduce((s, r) => s + r.img[i].y, 0)/n*vh});
+    const sh = mid2(avgI(LM.lSh), avgI(LM.rSh)), hip = mid2(avgI(LM.lHip), avgI(LM.rHip));
+    base.torso = Math.max(1, Math.hypot(sh.x - hip.x, sh.y - hip.y));
+    base.cx = hip.x; base.hipY = hip.y; base.shY = sh.y;
+    base.knY = [avgI(LM.lKn).y, avgI(LM.rKn).y];
+    if (frames[0].wld){
+      const avgW = i => ({x: frames.reduce((s, r) => s + r.wld[i].x, 0)/n, y: frames.reduce((s, r) => s + r.wld[i].y, 0)/n, z: frames.reduce((s, r) => s + r.wld[i].z, 0)/n});
+      const up = norm(sub(mid3(avgW(LM.lSh), avgW(LM.rSh)), mid3(avgW(LM.lHip), avgW(LM.rHip))));
+      base.up = up;
+      base.pitch = [[LM.lHip, LM.lKn], [LM.rHip, LM.rKn]].map(([h, k]) => angDeg(sub(avgW(k), avgW(h)), neg(up)));
+      const d = sub(avgW(LM.rSh), avgW(LM.lSh)); base.yaw = Math.atan2(d.z, -d.x);
+    }
+    base.ok = true; hist.length = 0; stepTimes = []; state.cadence = 0;
+    for (const tr of TRIGGERS){ tr.active = true; tr.lastFire = lastPoseAt; }   // start held, so nothing fires until it releases
+    return true;
+  }
+
+  function stop(){ if (stream){ stream.getTracks().forEach(tr => tr.stop()); stream = null; } }
+  return {
+    VERSION, LM, TRIGGERS, state, base,
+    load, update, stop, calibrateStand,
+    feed: ingest,                                           // feed(imgLandmarks, worldLandmarks, tSec, width, height) for tests
+    drain(){ const e = events; events = []; return e; },
+    get pose(){ return img ? {img, wld, t: lastPoseAt, vw, vh} : null; },
+    get lastPoseAt(){ return lastPoseAt; },
+    get fps(){ return fpsTimes.length; },
+    get camera(){ return camInfo; },
+    get latency(){ return latency; },
+    setLatency(v){ latency = clamp(v, 0, 0.6); },
+        openCamera,
+
+  };
+})();
+/* ===================== body core v0.1  (end) ===================== */
+</script>
+<script>
 (() => {
 "use strict";
 
 /* ============ constants ============ */
 const FH = 26.65;                 // half field width in yards
 const QUARTER_SECONDS = 300;      // 5 minute quarters
-const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
-const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const IDX = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lKn:25,rKn:26};
 const COL = {home:"#1f5fbf", homeDark:"#163f80", away:"#b3262e", awayDark:"#7a161c", gold:"#ffcf3f", turfA:"#2f7d3a", turfB:"#2a7034",
   apron:"#21502a", line:"rgba(255,255,255,.9)", skin:"#c68a5e", skinDark:"#8f5b39", ball:"#7a3f1d", pants:"#e9e4d8", ink:"#f7f3ea"};
@@ -234,7 +529,7 @@ function say(text, force){
 
 /* ============ input: touch / keyboard ============ */
 let mode = "touch";   // "touch" or "body"
-const input = {steps:[], juke:0, shoulder:false, stiff:false};
+const input = {steps:[], juke:0, shoulder:false, stiff:false, jukeT:null, shoulderT:null, stiffT:null};
 function addStep(t){ input.steps.push(t); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
 let tStart = null;
 cv.addEventListener("pointerdown", e => { tStart = {x:e.clientX, y:e.clientY, t:now()}; });
@@ -244,117 +539,47 @@ cv.addEventListener("pointerup", e => {
   tStart = null;
   if (mode === "body"){ if (game && game.phase !== "over") pause(); return; }
   if (dist < 28){ addStep(now()); return; }
-  if (Math.abs(dx) > Math.abs(dy)) input.juke = dx > 0 ? 1 : -1;
-  else if (dy > 0) input.shoulder = true;
-  else input.stiff = true;
+  if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
+  else if (dy > 0){ input.shoulder = true; input.shoulderT = now(); }
+  else { input.stiff = true; input.stiffT = now(); }
 });
 window.addEventListener("keydown", e => {
   if (!game || mode !== "touch") return;
   if (e.code === "Space" || e.code === "KeyF" || e.code === "KeyJ"){ addStep(now()); e.preventDefault(); }
-  else if (e.code === "ArrowLeft") input.juke = -1;
-  else if (e.code === "ArrowRight") input.juke = 1;
-  else if (e.code === "ArrowDown") input.shoulder = true;
-  else if (e.code === "ArrowUp") input.stiff = true;
+  else if (e.code === "ArrowLeft"){ input.juke = -1; input.jukeT = now(); }
+  else if (e.code === "ArrowRight"){ input.juke = 1; input.jukeT = now(); }
+  else if (e.code === "ArrowDown"){ input.shoulder = true; input.shoulderT = now(); }
+  else if (e.code === "ArrowUp"){ input.stiff = true; input.stiffT = now(); }
   else if (e.code === "Escape") pause();
 });
 
-/* ============ body tracking (knees-up framing) ============ */
-let landmarker = null, stream = null, lastVideoTime = -1, lastPoseAt = 0, poseT = 0;
-let img = null, wld = null;
-const body = {ok:false, shY:0, hipX:0, torso:0.2, thigh:0.12,
-  knees:[{i:IDX.lKn, base:null, up:false, t:0}, {i:IDX.rKn, base:null, up:false, t:0}],
-  hipHist:[], jukeCd:0, squatArmed:true, arms:{L:{prev:0, vel:0, armed:true}, R:{prev:0, vel:0, armed:true}}};
-function smooth(dst, src, a){
-  if (!dst) return src.map(p => ({x:p.x, y:p.y, z:p.z||0, v:p.visibility ?? 1}));
-  for (let i=0;i<src.length;i++){ const d = dst[i], p = src[i]; d.x += a*(p.x-d.x); d.y += a*(p.y-d.y); d.z += a*((p.z||0)-d.z); d.v = p.visibility ?? 1; }
-  return dst;
-}
-async function loadTracker(){
-  setStatus("Loading the body tracker...");
-  const vision = await import(`${MP_URL}/vision_bundle.mjs`);
-  const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
-  const make = delegate => vision.PoseLandmarker.createFromOptions(fileset, {
-    baseOptions:{modelAssetPath: MODEL_URL, delegate}, runningMode:"VIDEO", numPoses:1,
-    minPoseDetectionConfidence:0.5, minPosePresenceConfidence:0.5, minTrackingConfidence:0.5});
-  try { landmarker = await make("GPU"); } catch(e){ landmarker = await make("CPU"); }
-}
-async function startCamera(){
-  setStatus("Starting the camera...");
-  // ask for the full 4:3 sensor so nothing gets cropped off the sides
-  stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:"user", width:{ideal:960}, height:{ideal:720}, aspectRatio:{ideal:4/3}}});
-  const track = stream.getVideoTracks()[0];
-  try{ const caps = track.getCapabilities ? track.getCapabilities() : {}; if (caps.zoom && caps.zoom.min < 1) await track.applyConstraints({advanced:[{zoom: caps.zoom.min}]}); }catch(e){}
-  video.srcObject = stream; await video.play();
-}
-function detect(){
-  if (mode !== "body" || !landmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
-  lastVideoTime = video.currentTime;
-  let res; try{ res = landmarker.detectForVideo(video, performance.now()); }catch(e){ return; }
-  if (!res || !res.landmarks || !res.landmarks[0]) return;
-  const t = now(), dt = poseT ? clamp(t - poseT, 0.001, 0.25) : 0; poseT = t; lastPoseAt = t;
-  img = smooth(img, res.landmarks[0], 0.6);
-  if (res.worldLandmarks && res.worldLandmarks[0]) wld = smooth(wld, res.worldLandmarks[0], 0.5);
-  if (body.ok) readBody(t, dt);
-}
-const midY = (a,b) => (img[a].y + img[b].y)/2;
-const midX = (a,b) => (img[a].x + img[b].x)/2;
+/* ============ body play glue (uses body core) ============ */
+let calibHold = 0;
 function bodyVisible(){
-  if (!img || now() - lastPoseAt > 0.5) return false;
-  return [IDX.nose, IDX.lSh, IDX.rSh, IDX.lHip, IDX.rHip, IDX.lKn, IDX.rKn].every(i => img[i].v > 0.5);
+  const P = BodyCore.pose, L = BodyCore.LM;
+  if (!P || now() - BodyCore.lastPoseAt > 0.5) return false;
+  return [L.nose, L.lSh, L.rSh, L.lHip, L.rHip, L.lKn, L.rKn].every(i => P.img[i].v > 0.5);
 }
-let calibHold = 0, calibS = [];
 function updateCalib(dt){
-  if (!bodyVisible()){ calibHold = 0; calibS = [];
+  if (!bodyVisible()){ calibHold = 0;
     $("calibTitle").textContent = "Get in frame";
-    $("calibMsg").textContent = img ? "Almost. Step back until your knees are in the picture too." : "Stand facing the phone, about 4 feet back.";
+    $("calibMsg").textContent = BodyCore.pose ? "Almost. Step back until your knees are in the picture too." : "Stand facing the phone, about 4 feet back.";
     return false; }
   calibHold += dt;
-  calibS.push({shY: midY(IDX.lSh, IDX.rSh), hipY: midY(IDX.lHip, IDX.rHip), hipX: midX(IDX.lHip, IDX.rHip), knY: midY(IDX.lKn, IDX.rKn)});
-  if (calibS.length > 40) calibS.shift();
   const left = Math.ceil(2.5 - calibHold);
   $("calibTitle").textContent = left > 0 ? `Hold still... ${left}` : "Ready!";
   $("calibMsg").textContent = "Stand tall in your normal stance.";
   if (calibHold < 2.5) return false;
-  const n = calibS.length, avg = k => calibS.reduce((s,o) => s + o[k], 0)/n;
-  body.shY = avg("shY"); body.hipX = avg("hipX");
-  body.torso = Math.max(0.05, avg("hipY") - body.shY); body.thigh = Math.max(0.04, avg("knY") - avg("hipY"));
-  for (const k of body.knees){ k.base = null; k.up = false; }
-  body.hipHist = []; body.ok = true; return true;
+  return BodyCore.calibrateStand();
 }
-function readBody(t, dt){
-  // high knees: each knee rising toward hip height and coming back down is one step
-  for (const k of body.knees){
-    const y = img[k.i].y; if (img[k.i].v < 0.4) continue;
-    if (k.base === null) k.base = y;
-    const lift = (k.base - y)/body.thigh;
-    if (!k.up){ k.base += (y - k.base)*Math.min(1, (y > k.base ? 4 : 0.3)*dt); if (lift > 0.3){ k.up = true; k.t = 0; } }
-    else { k.t += dt; if (lift < 0.12){ k.up = false; if (k.t < 1.2) addStep(t); } if (k.t > 2) k.up = false; }
-  }
-  // juke: a quick hop away from center
-  const hx = midX(IDX.lHip, IDX.rHip);
-  body.hipHist.push({t, x:hx}); while (body.hipHist.length && t - body.hipHist[0].t > 0.3) body.hipHist.shift();
-  body.jukeCd = Math.max(0, body.jukeCd - dt);
-  if (body.hipHist.length > 2 && body.jukeCd <= 0){
-    const disp = (hx - body.hipHist[0].x)/body.torso;
-    const offNow = Math.abs(hx - body.hipX), offThen = Math.abs(body.hipHist[0].x - body.hipX);
-    if (Math.abs(disp) > 0.45 && offNow > offThen){ input.juke = disp < 0 ? 1 : -1; body.jukeCd = 0.6; } // image left is the player's right
-  }
-  // squat to lower the shoulder
-  const drop = (midY(IDX.lSh, IDX.rSh) - body.shY)/body.torso;
-  if (body.squatArmed && drop > 0.22){ input.shoulder = true; body.squatArmed = false; }
-  if (drop < 0.1) body.squatArmed = true;
-  if (drop < 0.05) body.shY += (midY(IDX.lSh, IDX.rSh) - body.shY)*Math.min(1, 0.2*dt);
-  // stiff arm: an arm snapping straight
-  if (wld){
-    for (const [s, sh, el, wr] of [["L",IDX.lSh,IDX.lEl,IDX.lWr],["R",IDX.rSh,IDX.rEl,IDX.rWr]]){
-      const a = body.arms[s], A = wld[sh], E = wld[el], Wr = wld[wr];
-      const d3 = (p,q) => Math.hypot(p.x-q.x, p.y-q.y, p.z-q.z);
-      const ext = d3(A, Wr)/Math.max(0.05, d3(A,E) + d3(E,Wr));
-      if (dt > 0) a.vel = lerp(a.vel, (ext - a.prev)/dt, 0.5);
-      a.prev = ext;
-      if (ext < 0.72) a.armed = true;
-      if (a.armed && ext > 0.86 && a.vel > 1.3){ input.stiff = true; a.armed = false; }
-    }
+// turn body core events into game input; tEff already has the measured delay taken off
+function pumpBody(){
+  for (const e of BodyCore.drain()){
+    if (!game || game.phase === "over" || calibrating || paused) continue;
+    if (e.type === "step") addStep(e.t);
+    else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }
+    else if (e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }
+    else if (e.type === "punch"){ input.stiff = true; input.stiffT = e.tEff; }
   }
 }
 
@@ -424,7 +649,7 @@ function endPlay(kind, extra){
   const g = game, p = g.p;
   if (g.phase !== "live") return;
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
-  const gain = kind === "td" ? g.ballOn : Math.round(p.z);
+  const gain = kind === "td" ? g.ballOn : Math.min(Math.round(p.z), g.ballOn - 1);   // short of the goal line stays short
   g.result = {kind, gain};
   g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain);
   if (kind === "td"){
@@ -469,11 +694,11 @@ function updateLive(dt, t){
   p.bob += dt*(2 + sps*2.2);
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
-    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*2.3; p.jukeT = 0; p.lastJuke = t; p.speed *= 0.85; sfx.whoosh();
+    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*2.3; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.85; sfx.whoosh();
   }
-  if (input.shoulder){ p.lastShoulder = t; p.dip = 1; }
-  if (input.stiff){ p.lastStiff = t; p.stiffAnim = 1; }
-  input.juke = 0; input.shoulder = input.stiff = false;
+  if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.dip = 1; }
+  if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; }
+  input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null;
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
   // drift toward the called hole before the line, like following your blockers
@@ -572,7 +797,7 @@ function update(dt){
   if (bannerT > 0){ bannerT -= dt; if (bannerT <= 0) $("banner").hidden = true; }
   g.flash = Math.max(0, g.flash - dt); g.shake = Math.max(0, g.shake - dt);
   if (mode === "body" && g.phase !== "over"){
-    if (t - lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
+    if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
   if (g.phase === "huddle"){
     g.t -= dt;
@@ -580,7 +805,8 @@ function update(dt){
   } else if (g.phase === "cadence"){
     g.t -= dt;
     if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", "Knees up!", 0.7); }
-    if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4); }
+    if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
+      input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; }
   } else if (g.phase === "live"){
     updateLive(dt, t);
   } else if (g.phase === "dead"){
@@ -796,12 +1022,13 @@ function drawSelf(c, t){
   }
 }
 function drawPip(){
-  if (mode !== "body" || !stream || video.readyState < 2) return;
+  const P = BodyCore.pose;
+  if (mode !== "body" || !BodyCore.camera || video.readyState < 2) return;
   const pw = Math.min(W*0.24, 160), ph = pw*((video.videoHeight/video.videoWidth) || 0.75);
   const x = 16, y = H - ph - 16 - (H > W ? 60 : 0);
   cx.save(); cx.globalAlpha = 0.85; cx.beginPath(); cx.roundRect(x, y, pw, ph, 10); cx.clip();
   cx.translate(x + pw, y); cx.scale(-1, 1); cx.drawImage(video, 0, 0, pw, ph); cx.restore();
-  if (img){ cx.fillStyle = COL.gold; for (const k of ["nose","lSh","rSh","lHip","rHip","lKn","rKn","lWr","rWr"]){ const q = img[IDX[k]]; if (q.v < 0.5) continue; cx.beginPath(); cx.arc(x + (1-q.x)*pw, y + q.y*ph, 3, 0, 7); cx.fill(); } }
+  if (P){ cx.fillStyle = COL.gold; for (const k of ["nose","lSh","rSh","lHip","rHip","lKn","rKn","lWr","rWr"]){ const q = P.img[IDX[k]]; if (q.v < 0.5) continue; cx.beginPath(); cx.arc(x + (1-q.x)*pw, y + q.y*ph, 3, 0, 7); cx.fill(); } }
 }
 function render(t){
   const c = camState();
@@ -821,7 +1048,7 @@ let last = 0;
 function frame(ms){
   requestAnimationFrame(frame);
   const t = ms/1000, dt = Math.min(0.05, last ? t - last : 0); last = t;
-  if (mode === "body") detect();
+  if (mode === "body"){ BodyCore.update(); pumpBody(); }
   if (calibrating && updateCalib(dt)){ calibrating = false; $("calibScreen").hidden = true; if (recentering){ recentering = false; paused = false; last = 0; } else beginGame(); }
   update(dt);
   render(t);
@@ -839,9 +1066,10 @@ async function startBody(){
   $("touchBtn").disabled = $("bodyBtn").disabled = true;
   try{
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error("insecure");
-    if (!landmarker) await loadTracker();
-    if (!stream) await startCamera();
-    mode = "body"; keepAwake(); body.ok = false; calibHold = 0; calibS = [];
+    await BodyCore.load(setStatus);
+    setStatus("Starting the camera...");
+    if (!BodyCore.camera) await BodyCore.openCamera(video);
+    mode = "body"; keepAwake(); calibHold = 0;
     $("startScreen").hidden = true; $("calibScreen").hidden = false; calibrating = true;
   }catch(e){
     let msg = "Body play can't start here. Open the game from its own https link, like GitHub Pages. Touch play works here.";
@@ -861,7 +1089,7 @@ $("bodyBtn").addEventListener("click", startBody);
 $("againBtn").addEventListener("click", () => { primeAudio(); beginGame(); });
 $("pauseBtn").addEventListener("click", e => { e.stopPropagation(); pause(); });
 $("resumeBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; last = 0; });
-$("recenterBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; if (mode === "body"){ body.ok = false; calibHold = 0; calibS = []; calibrating = true; recentering = true; $("calibScreen").hidden = false; paused = true; } });
+$("recenterBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; if (mode === "body"){ calibHold = 0; calibrating = true; recentering = true; $("calibScreen").hidden = false; paused = true; } });
 $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").hidden = true; endGame(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
