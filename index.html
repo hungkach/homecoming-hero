@@ -117,7 +117,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     <p>You're the Mustangs running back on homecoming night. Take every handoff in first person, hit the hole, and beat the Raiders over four quarters.</p>
     <dl class="moves">
       <dt>Sprint</dt><dd>High knees in place. Faster knees, faster run.</dd><span class="tap">tap fast</span>
-      <dt>Juke</dt><dd>Hop left or right as a tackler closes in.</dd><span class="tap">swipe sideways</span>
+      <dt>Juke</dt><dd>Bound out to one side and straight back as a tackler closes in.</dd><span class="tap">swipe sideways</span>
       <dt>Truck</dt><dd>Duck your head and shoulder right before contact.</dd><span class="tap">swipe down</span>
       <dt>Stiff arm</dt><dd>Raise one arm out to the side the tackler is on.</dd><span class="tap">swipe up</span>
     </dl>
@@ -198,7 +198,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 
 <script>
 /* =====================================================================
-   body core v0.2  (start)
+   body core v0.3  (start)
    Shared camera body tracking for the body arcade games.
    Copy this whole <script> block into another game. It uses no game
    globals; the game reads BodyCore.state, drains BodyCore events, and
@@ -206,7 +206,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
    ===================================================================== */
 const BodyCore = (() => {
   "use strict";
-  const VERSION = "0.2";
+  const VERSION = "0.3";
   const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const TARGET_FPS = 30;
@@ -439,7 +439,9 @@ const BodyCore = (() => {
       {id: "lead", on: 0.14, off: 0.05, calib: true, fn: F => F.knOK[s] && F.knOK[o] ? F.kneeLead[s] : null}
     ]);
   }
-  // hop: the whole body shifts sideways, feet included (a lean moves only the shoulders)
+  // hop, or a lateral bound: the whole body shifts sideways, feet included (a lean moves only the shoulders).
+  // The move is the bound out from center; the step back to center right after it never counts,
+  // so the player can bound out and come straight back and stay in frame.
   const hopDir = F => Math.sign(delta(F, 0.25, G => G.lat)) || 1;
   function lowerShift(F){
     const P = pastFrame(F, 0.25);
@@ -448,15 +450,15 @@ const BodyCore = (() => {
     return null;
   }
   trigger("hop", null, [
-    {id: "speed", on: 1.5, off: 0.5, calib: true, fn: F => F.ok ? rate(F, 0.15, G => G.lat)*hopDir(F) : null},
-    {id: "shift", on: 0.3, off: 0.1, calib: true, fn: F => F.ok ? Math.abs(delta(F, 0.25, G => G.lat)) : null},
-    {id: "feet", on: 0.25, off: 0.08, calib: true, fn: lowerShift}
+    {id: "speed", on: 1.2, off: 0.4, calib: true, fn: F => F.ok ? rate(F, 0.15, G => G.lat)*hopDir(F) : null},
+    {id: "shift", on: 0.25, off: 0.08, calib: true, fn: F => F.ok ? Math.abs(delta(F, 0.3, G => G.lat)) : null},
+    {id: "feet", on: 0.2, off: 0.06, calib: true, fn: lowerShift}
   ], {
     gate: (F, tr) => {
       const d = hopDir(F);
-      if (d === -lastHop.dir && F.t - lastHop.t < 0.8) return false;                  // the bounce back after a hop
-      const P = pastFrame(F, 0.25), returning = Math.abs(F.lat) < Math.abs(P.lat) && Math.abs(P.lat) > 0.3;
-      return !returning || tr.vals[0] >= tr.cues[0].on;                                // heading home only counts if it's explosive
+      if (d === -lastHop.dir && F.t - lastHop.t < 1.5) return false;                  // coming back to center after a bound
+      const P = pastFrame(F, 0.25), returning = Math.abs(F.lat) < Math.abs(P.lat) && Math.abs(P.lat) > 0.15;
+      return !returning || tr.vals[0] >= tr.cues[0].on*1.5;                            // heading home only counts if it's clearly explosive
     },
     info: F => { const d = hopDir(F); lastHop.dir = d; lastHop.t = F.t; return {dir: d}; }
   });
@@ -686,7 +688,7 @@ const BodyCore = (() => {
 
   };
 })();
-/* ===================== body core v0.2  (end) ===================== */
+/* ===================== body core v0.3  (end) ===================== */
 </script>
 <script>
 (() => {
@@ -1072,8 +1074,8 @@ window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keySta
 const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }};
 const WARM_MOVES = [
   {id: "knees", big: "High knees!", small: "Sprint in place.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
-  {id: "hopL", big: "Hop left", small: "", say: "Hop left.", secs: 1.6, cap: ["hop"]},
-  {id: "hopR", big: "Hop right", small: "", say: "Hop right.", secs: 1.6, cap: ["hop"]},
+  {id: "hopL", big: "Bound left", small: "Out to the side, then straight back to center.", say: "Bound left, and back.", secs: 2.0, cap: ["hop"]},
+  {id: "hopR", big: "Bound right", small: "Out to the side, then straight back to center.", say: "Bound right, and back.", secs: 2.0, cap: ["hop"]},
   {id: "squat", big: "Squat", small: "Drop your hips and hold.", say: "Squat.", secs: 2.0, cap: ["level"], once: true},
   {id: "duck", big: "Truck!", small: "Duck your head and shoulder.", say: "Truck! Duck your head and shoulder.", secs: 1.8, cap: ["duck"]},
   {id: "raiseL", big: "Stiff arm left", small: "Left arm out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
@@ -1081,7 +1083,7 @@ const WARM_MOVES = [
   {id: "raiseB", big: "Block!", small: "Both arms out to the sides.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
   {id: "jump", big: "Jump!", small: "Jump up like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
-const MOVE_NAMES = {step: "high knees", hop: "hop", level: "squat", duck: "truck", raise: "arm raise", jump: "jump"};
+const MOVE_NAMES = {step: "high knees", hop: "bound", level: "squat", duck: "truck", raise: "arm raise", jump: "jump"};
 const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
 function warmPlan(){
   return [WARM_STAND, roundIntro(1, "Every move once."), ...WARM_MOVES.map(m => ({...m, round: 1})),
@@ -1275,8 +1277,8 @@ function startHuddle(newDrive){
 function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
   const steps = g.playType === "route"
-    ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Hop to break"], ["🙌", touch ? "Swipe up to catch" : "Jump to catch"]]
-    : [["↔️", touch ? "Swipe toward the blitzer" : "Hop to the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👐", touch ? "Tap to punch" : "Both arms out to block"]];
+    ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Bound to break"], ["🙌", touch ? "Swipe up to catch" : "Jump to catch"]]
+    : [["↔️", touch ? "Swipe toward the blitzer" : "Bound toward the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👐", touch ? "Tap to punch" : "Both arms out to block"]];
   $("pcTag").textContent = `${ord(g.down)} and ${g.toGo >= g.ballOn ? "goal" : g.toGo}`;
   $("pcName").textContent = g.play.name;
   $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");

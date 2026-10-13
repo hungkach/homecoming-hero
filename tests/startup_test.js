@@ -72,16 +72,14 @@ function director(t){
       const skip = (process.env.MISS || "").split(",").includes(id) && S.cur.round <= 2;
       if (skip) {}
       else if (id === "knees" && u > 0) knees(P, u);
-      else if (id === "hopL") off.x = offX + 0.38*ease(u/0.25);            // hop left = person's +x
+      else if (id === "hopL") off.x = offX + 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // bound left (person's +x) and back
       else if (id === "squat" && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
       else if (id === "duck") duck(P, armPulse(u));
       else if (id === "raiseL") raiseArm(P, "l", armPulse(u));
       else if (id === "raiseR") raiseArm(P, "r", armPulse(u));
       else if (id === "raiseB"){ raiseArm(P, "l", armPulse(u)); raiseArm(P, "r", armPulse(u)); }
       else if (id === "jump") off.y = jumpUp(u);
-      if (id === "hopL" && u > 1.1) offX += 0.38;   // stays where the hop landed
-      if (id === "hopR") off.x = offX - 0.38*ease(u/0.25);
-      if (id === "hopR" && u > 1.1) offX -= 0.38;
+      if (id === "hopR") off.x = offX - 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));
       if (id !== "hopL" && id !== "hopR") off.x = offX;
       seenSteps.add(id + (S.cur.round || 0));
     }

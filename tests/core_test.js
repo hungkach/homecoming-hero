@@ -76,6 +76,9 @@ results.hopR = section("hop to player's right", 1.2, u => ({P: standing(), off: 
 results.back = section("slow walk back to center", 1.5, u => ({P: standing(), off: {x: -0.38*(1 - ease(u/1.2)), y: 0}}));
 results.hopL = section("hop to player's left", 1.2, u => ({P: standing(), off: {x: 0.38*ease(u/0.25), y: 0}}));
 results.back2 = section("slow walk back", 1.5, u => ({P: standing(), off: {x: 0.38*(1 - ease(u/1.2)), y: 0}}));
+// a lateral bound: out to the player's right and straight back to center
+results.boundR = section("bound right and straight back", 1.6, u => ({P: standing(), off: {x: -0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35))*(u > 1 ? 0 : 1), y: 0}}));
+results.boundL = section("bound left and straight back", 1.6, u => ({P: standing(), off: {x: 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35))*(u > 1 ? 0 : 1), y: 0}}));
 results.lean = section("lean right, hips still", 1.5, u => { const P = standing(), d = -0.22*ease(u/0.3);
   for (const k of ["nose","lEar","rEar","lSh","rSh","lEl","rEl","lWr","rWr"]) P[k] = [P[k][0] + d, P[k][1], P[k][2]];
   return {P, off: {x:0, y:0}}; });
@@ -119,12 +122,14 @@ const checks = [
   ["hop right fires once, to the right", n(results.hopR, "hop>") === 1 && !n(results.hopR, "hop<")],
   ["walking back does not fire", !n(results.back, "hop<") && !n(results.back, "hop>")],
   ["hop left fires once, to the left", n(results.hopL, "hop<") === 1 && !n(results.hopL, "hop>")],
+  ["bound right and back fires once, to the right", n(results.boundR, "hop>") === 1 && !n(results.boundR, "hop<")],
+  ["bound left and back fires once, to the left", n(results.boundL, "hop<") === 1 && !n(results.boundL, "hop>")],
   ["a lean is not a hop", !n(results.lean, "hop<") && !n(results.lean, "hop>")],
   ["squat fires one level change", n(results.squat, "level") === 1],
   ["two right stiff arms, no left (fist may leave frame when close and tilted)", n(results.punchR, "punchR") >= (D < 2 && TILT < 0 ? 1 : 2) && !n(results.punchR, "punchL")],
   ["arms overhead fires once" + (D < 2 ? " (skipped: wrists leave frame this close)" : ""), D < 2 || n(results.over, "overhead") === 1],
   ["no raise, duck, or jump during high knees", !Object.keys(results.knees).some(k => /^(raise|duck|jump)/.test(k))],
-  ["no jump or raise during hops", !Object.keys({...results.hopR, ...results.hopL, ...results.back, ...results.back2}).some(k => /^(jump|raise)/.test(k))],
+  ["no jump or raise during hops", !Object.keys({...results.hopR, ...results.hopL, ...results.back, ...results.back2, ...results.boundR, ...results.boundL}).some(k => /^(jump|raise)/.test(k))],
   ["left arm raise fires twice, only left", n(results.raiseL, "raiseL") === 2 && !n(results.raiseL, "raiseR")],
   ["right arm raise fires once, only right", n(results.raiseR, "raiseR") === 1 && !n(results.raiseR, "raiseL")],
   ["both arms raise fires both sides", n(results.raiseB, "raiseL") === 1 && n(results.raiseB, "raiseR") === 1],
