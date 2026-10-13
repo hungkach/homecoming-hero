@@ -126,6 +126,8 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <select id="workout"><option value="15">15 minutes</option><option value="20" selected>20 minutes</option><option value="25">25 minutes</option><option value="30">30 minutes</option></select>
     </label>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
+    <label class="toggle"><input type="checkbox" id="studioOn"> Studio voices (natural voices, about a 110 MB download the first time)</label>
+    <p class="note" id="studioStatus" hidden></p>
     <label class="pick" for="booth">Announcer
       <select id="booth"><option value="dark">After dark: dark and blue</option><option value="family">Family: clean jokes</option><option value="off">Off</option></select>
     </label>
@@ -990,9 +992,29 @@ function say(text, force){
 }
 // the booth uses a different voice than the coach when the device has one, pitched up and quicker
 function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= voiceScore(voices[0]) - 12 && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
+/* ---------- voice output ----------
+   One queue for both voices and both engines: a Studio voice clip when one is ready for the line, the
+   device's speech otherwise. queue: wait for whatever is playing instead of cutting it off. */
+const voiceQ = [];
+let clipSrc = null, clipUntil = 0, voiceBus = null;
+const voiceBusy = () => { let b = now() < clipUntil; try{ b = b || speechSynthesis.speaking || speechSynthesis.pending; }catch(e){} return b; };
+function stopVoices(){
+  voiceQ.length = 0;
+  try{ speechSynthesis.cancel(); }catch(e){}
+  if (clipSrc){ try{ clipSrc.onended = null; clipSrc.stop(); }catch(e){} clipSrc = null; }
+  clipUntil = 0; boothUntil = Math.min(boothUntil, now());
+}
 function speak(text, booth, queue){
+  if (queue && voiceBusy()){ voiceQ.push({text, booth}); return; }
+  if (!booth && !queue) stopVoices();
+  startLine(text, booth);
+}
+function voiceTick(){ if (voiceQ.length && !voiceBusy()){ const v = voiceQ.shift(); startLine(v.text, v.booth); } }
+function startLine(text, booth){
+  const clip = Studio.clip(text, booth);
+  if (clip && AC){ playClip(clip, booth); return; }
+  Studio.want(text, booth);                 // make it for next time
   try{
-    if (!booth && !queue) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text), v = booth ? boothVoice() : voice;
     if (booth){ boothUntil = now() + speechSecs(text); u.onend = u.onerror = () => { boothUntil = Math.min(boothUntil, now()); }; }
     if (v){ u.voice = v; u.lang = v.lang; }
@@ -1001,6 +1023,133 @@ function speak(text, booth, queue){
     speechSynthesis.speak(u);
   }catch(e){}
 }
+function playClip(clip, booth){
+  try{
+    if (!voiceBus){ voiceBus = AC.createGain(); voiceBus.gain.value = 1.0; voiceBus.connect(AC.destination); }
+    const buf = AC.createBuffer(1, clip.pcm.length, clip.sr), ch = buf.getChannelData(0);
+    for (let i = 0; i < clip.pcm.length; i++) ch[i] = clip.pcm[i]/32768;
+    const src = AC.createBufferSource(); src.buffer = buf; src.connect(voiceBus);
+    const dur = clip.pcm.length/clip.sr;
+    clipSrc = src; clipUntil = now() + dur + 0.05;
+    if (booth) boothUntil = clipUntil;
+    src.onended = () => { if (clipSrc === src){ clipSrc = null; clipUntil = 0; } if (booth) boothUntil = Math.min(boothUntil, now()); };
+    src.start();
+  }catch(e){ clipUntil = 0; }
+}
+
+/* ---------- Studio voices ----------
+   Kokoro, an open-source neural voice (Apache 2.0), running in a background worker so it never stalls
+   the game or the body tracker. The model (about 110 MB with its runtime) downloads once from the
+   Hugging Face CDN and the browser keeps it. Every finished line is saved on the device too, so the
+   next session starts with them. Lines are made in the gaps: never during a live play, the snap count,
+   or the timed parts of the warm-up. Anything not ready yet uses the device voice. */
+const Studio = (() => {
+  const LIB = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js";
+  const MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+  const VOICE = {coach: "am_michael", booth: "af_heart"}, SPEED = {coach: 1.0, booth: 1.08};
+  const CACHE = "hh-studio-v1";
+  const clips = new Map(), wanted = new Map();
+  let worker = null, state = "off", progress = 0, err = "", busyKey = null, made = 0;
+  const who = booth => booth ? "booth" : "coach";
+  const key = (text, booth) => who(booth) + "|" + text;
+  const url = k => "https://studio.homecoming.hero/" + encodeURIComponent(k);
+  const enabled = () => { try{ return $("studioOn").checked; }catch(e){ return false; } };
+  // WAV in and out of the device cache, 16-bit mono
+  function toWav(pcm, sr){
+    const b = new ArrayBuffer(44 + pcm.length*2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, "RIFF"); v.setUint32(4, 36 + pcm.length*2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr*2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, pcm.length*2, true);
+    new Int16Array(b, 44).set(pcm); return b;
+  }
+  const fromWav = b => ({sr: new DataView(b).getUint32(24, true), pcm: new Int16Array(b.slice(44))});
+  async function loadSaved(){
+    try{
+      const c = await caches.open(CACHE);
+      for (const req of await c.keys()){
+        const k = decodeURIComponent(req.url.split("/").pop()), r = await c.match(req);
+        if (r) clips.set(k, fromWav(await r.arrayBuffer()));
+      }
+    }catch(e){}
+  }
+  async function save(k, clip){ try{ const c = await caches.open(CACHE); await c.put(url(k), new Response(toWav(clip.pcm, clip.sr), {headers: {"Content-Type": "audio/wav"}})); }catch(e){} }
+  const WORKER = `
+    let tts = null;
+    self.onmessage = async (e) => {
+      const m = e.data;
+      if (m.type === "init"){
+        try{
+          const { KokoroTTS } = await import(m.lib);
+          tts = await KokoroTTS.from_pretrained(m.model, { dtype: "q8", device: "wasm",
+            progress_callback: (p) => { if (p && p.status === "progress" && p.total > 1e6) self.postMessage({ type: "progress", file: p.file, loaded: p.loaded, total: p.total }); } });
+          self.postMessage({ type: "ready" });
+        }catch(err){ self.postMessage({ type: "error", msg: String(err && err.message || err) }); }
+      } else if (m.type === "gen"){
+        try{
+          const a = await tts.generate(m.text, { voice: m.voice, speed: m.speed });
+          const f = a.audio, pcm = new Int16Array(f.length);
+          for (let i = 0; i < f.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(f[i]*32767)));
+          self.postMessage({ type: "clip", key: m.key, sr: a.sampling_rate, pcm }, [pcm.buffer]);
+        }catch(err){ self.postMessage({ type: "genError", key: m.key, msg: String(err && err.message || err) }); }
+      }
+    };`;
+  async function start(){
+    if (!enabled() || state === "loading" || state === "ready") return;
+    if (!window.Worker || !window.caches || !window.isSecureContext){ state = "failed"; err = "This browser can't run studio voices."; return; }
+    state = "loading"; progress = 0; err = "";
+    await loadSaved();
+    try{
+      worker = new Worker(URL.createObjectURL(new Blob([WORKER], {type: "text/javascript"})), {type: "module"});
+      worker.onmessage = onMsg;
+      worker.onerror = e => { state = "failed"; err = "The voice engine didn't start."; };
+      worker.postMessage({type: "init", lib: LIB, model: MODEL});
+    }catch(e){ state = "failed"; err = "The voice engine didn't start."; }
+  }
+  function onMsg(e){
+    const m = e.data;
+    if (m.type === "progress") progress = m.total ? m.loaded/m.total : 0;
+    else if (m.type === "ready"){ state = "ready"; prewarm(); }
+    else if (m.type === "error"){ state = "failed"; err = "Studio voices didn't load (" + m.msg.slice(0, 80) + "). Using device voices."; }
+    else if (m.type === "clip"){ const c = {sr: m.sr, pcm: m.pcm}; clips.set(m.key, c); save(m.key, c); wanted.delete(m.key); busyKey = null; made++; }
+    else if (m.type === "genError"){ wanted.delete(m.key); busyKey = null; }
+  }
+  // lines are made in the gaps, never while timing matters
+  const quiet = () => !(game && (game.phase === "live" || game.phase === "cadence")) && !(setup.active && (setup.phase === "movetest" || setup.phase === "latIntro" || setup.phase === "latency"));
+  function tick(){
+    if (state !== "ready" || busyKey || !wanted.size || !quiet()) return;
+    let best = null; for (const [k, w] of wanted) if (!best || w.pri < best.pri) best = w;
+    if (clips.has(best.key)){ wanted.delete(best.key); return; }
+    busyKey = best.key;
+    worker.postMessage({type: "gen", key: best.key, text: best.text, voice: VOICE[best.who], speed: SPEED[best.who]});
+  }
+  function want(text, booth, pri = 0){
+    if (!enabled() || state === "failed" || !text) return;
+    const k = key(text, booth);
+    if (clips.has(k)) return;
+    const w = wanted.get(k); if (w){ w.pri = Math.min(w.pri, pri); return; }
+    wanted.set(k, {key: k, text, who: who(booth), pri});
+  }
+  // what to make first: play calls and coaching, then the booth's lines for the current mode
+  function prewarm(){
+    const coach = [...PLAYS.flatMap(p => [p.say, ...Object.values(FRONT_TIP).map(t => p.say + " " + t)]), ...PASS_PLAYS.map(p => p.say), ...ROUTE_PLAYS.map(p => p.say),
+      "Down. Set. Hut!", "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
+      "Punt.", "The kick is good!", "No good.", "Homecoming win! Mustangs take it.", "Final score.",
+      "Raiders march down and score a touchdown.", "Raiders kick a field goal.", "Mustangs defense forces a punt.", "Interception! The Mustangs defense takes it back."];
+    const warm = [WARM_STAND, ...WARM_MOVES].map(m => m.say).concat(["Round 1.", "Round 2.", "One more round.", "Locked in.", "You're set.", "Step back", "Step closer", "Step left", "Step right",
+      "Tilt the camera up", "Tilt the camera down", "Reach both arms up high", "Step in front of the camera", "Arm out on the beat. Four counts, then one arm out on every beat."]);
+    for (const t of coach) want(t, false, 0);
+    for (const t of warm) want(t, false, mode === "body" ? 0 : 3);
+    const set = boothMode() === "family" ? CALLS : CALLS_DARK;
+    if (boothMode() !== "off") for (const k in set) for (const t of set[k]) want(t, true, k === "open" ? 0 : 2);
+  }
+  function status(){
+    if (!enabled()) return "";
+    if (state === "loading") return progress > 0 ? `Studio voices: downloading ${Math.round(progress*100)} percent` : (clips.size ? `Studio voices: ${clips.size} lines saved, starting the voice engine` : "Studio voices: starting the download");
+    if (state === "failed") return err;
+    if (state === "ready") return wanted.size ? `Studio voices: ${clips.size} lines ready, making the rest` : `Studio voices: all ${clips.size} lines ready`;
+    return "";
+  }
+  return {start, tick, want, status, clip: (text, booth) => enabled() ? clips.get(key(text, booth)) || null : null, get state(){ return state; }, get made(){ return made; }, get busy(){ return !!busyKey; }};
+})();
 
 
 /* ============ announcer ============ */
@@ -1172,8 +1321,7 @@ function announcerTick(){
   const fits = !g ? true : g.phase === "huddle" ? g.t + 1.5 - secs > 0 : g.phase === "cadence" ? false : g.phase === "live" ? LIVE_OK.has(q.kind) : true;
   if (t > q.until || (preSnap && g && g.phase !== "huddle")){ annQ.shift(); return; }
   if (t < q.at || !fits) return;
-  let busy = false; try{ busy = speechSynthesis.speaking || speechSynthesis.pending; }catch(e){}
-  if (busy || boothTalking() || t - lastSpoke < 0.4) return;
+  if (voiceBusy() || boothTalking() || t - lastSpoke < 0.4) return;
   speak(annQ.shift().text, true);
 }
 
@@ -2911,7 +3059,7 @@ const R3 = (() => {
   }
   // body tracking matters more than pixels: if detection slows down, render fewer pixels, then go back to 2D
   function guard(dt){
-    if (mode !== "body" || !BodyCore.camera) return;
+    if (mode !== "body" || !BodyCore.camera || Studio.busy) return;   // a studio voice being made isn't the 3D view's fault
     lowFor = BodyCore.fps < 20 ? lowFor + dt : Math.max(0, lowFor - dt);
     if (lowFor < 4) return;
     lowFor = 0;
@@ -2931,6 +3079,7 @@ function frame(ms){
   if (mode === "body"){ BodyCore.update(); pumpBody(); }
   if (setup.active){ updateDiag(); updateSetup(dt); }
   update(dt);
+  voiceTick(); Studio.tick(); showStudio();
   render(t);
 }
 let calibrating = false, recentering = false, wakeLock = null;
@@ -3003,7 +3152,8 @@ async function startBody(){
 }
 function updateDiag(){
   const c = BodyCore.camera; if (!c) return;
-  $("calibDiag").textContent = `${c.mode.label} · ${c.label} · ${c.width}×${c.height}${c.zoom != null ? ` · zoom ${c.zoom}` : ""} · ${BodyCore.fps} fps`;
+  const st = Studio.status();
+  $("calibDiag").textContent = `${c.mode.label} · ${c.label} · ${c.width}×${c.height}${c.zoom != null ? ` · zoom ${c.zoom}` : ""} · ${BodyCore.fps} fps${st ? " · " + st : ""}`;
 }
 function beginGame(){
   $("endScreen").hidden = true; $("board").hidden = false; $("pauseBtn").hidden = mode !== "touch";
@@ -3020,6 +3170,12 @@ $("screenTv").addEventListener("click", () => { screenChoice = "tv"; renderSetup
 $("modeSel").addEventListener("change", renderSetup);
 try{ const b = localStorage.getItem("hhBooth"); if (b) $("booth").value = b; const w = localStorage.getItem("hhWorkout"); if (w) $("workout").value = w; }catch(e){}
 $("workout").addEventListener("change", e => { try{ localStorage.setItem("hhWorkout", e.target.value); }catch(err){} });
+try{ if (localStorage.getItem("hhStudio") === "1") $("studioOn").checked = true; }catch(e){}
+$("studioOn").addEventListener("change", e => { try{ localStorage.setItem("hhStudio", e.target.checked ? "1" : "0"); }catch(err){} if (e.target.checked) Studio.start(); });
+// the studio status line on the start and end screens, and under the camera readout during setup
+let studioShown = "";
+function showStudio(){ const st = Studio.status(); if (st === studioShown) return; studioShown = st; const el = $("studioStatus"); el.textContent = st; el.hidden = !st; }
+if ($("studioOn").checked) Studio.start();
 $("booth").addEventListener("change", e => { try{ localStorage.setItem("hhBooth", e.target.value); }catch(err){} });
 $("voiceSel").addEventListener("change", e => {
   voice = voices.find(v => v.voiceURI === e.target.value) || voice;
