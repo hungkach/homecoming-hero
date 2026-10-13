@@ -2337,15 +2337,19 @@ const R3 = (() => {
       f.shadow.scale.set(1.3, 2.2, 1); return;
     }
     f.shadow.scale.set(1, 1, 1);
-    const cr = o.crouch || 0, run = o.run || 0, a = o.anim || 0, sw = Math.sin(a)*0.75*run;
+    // stride comes from real speed when we have it (amp, sf forward share, ss sideways share), else the old run/anim knobs
+    const cr = o.crouch || 0, run = o.amp != null ? Math.min(1, o.amp/0.75) : o.run || 0, a = o.anim || 0, sf = o.sf ?? 1, ss = o.ss || 0;
+    const sw = Math.sin(a)*0.75*run;
     // a stance: knees bend, hips drop, chest leans over the line
     const kneeBend = cr*1.3, thighFwd = cr*0.75, drop = 1.0 - (0.5*Math.cos(thighFwd) + 0.5*Math.cos(kneeBend - thighFwd));
     low.rotation.set(0, 0, 0); low.position.set(0, -drop + Math.abs(Math.cos(a))*0.06*run, 0);
-    up.rotation.x = cr*0.7 + run*0.25;
-    legs[0].hip.rotation.x = -thighFwd - sw; legs[1].hip.rotation.x = -thighFwd + sw;
+    up.rotation.x = cr*0.7 + (o.lean ?? run*0.25);
+    legs[0].hip.rotation.x = -thighFwd - sw*sf; legs[1].hip.rotation.x = -thighFwd + sw*sf;
+    // a shuffle swings the legs out to the side instead of front to back
+    legs[0].hip.rotation.z = -Math.max(0, Math.sin(a))*run*0.6*Math.abs(ss); legs[1].hip.rotation.z = Math.max(0, -Math.sin(a))*run*0.6*Math.abs(ss);
     legs[0].knee.rotation.x = kneeBend + Math.max(0, sw)*1.2; legs[1].knee.rotation.x = kneeBend + Math.max(0, -sw)*1.2;
     const reach = o.reach || 0;
-    arms[0].sh.rotation.set(sw*0.9 - reach*1.3 - cr*0.6, 0, -0.12); arms[1].sh.rotation.set(-sw*0.9 - reach*1.3 - cr*0.6, 0, 0.12);
+    arms[0].sh.rotation.set(sw*sf*0.9 - reach*1.3 - cr*0.6, 0, -0.12); arms[1].sh.rotation.set(-sw*sf*0.9 - reach*1.3 - cr*0.6, 0, 0.12);
     arms[0].el.rotation.x = arms[1].el.rotation.x = -0.6*run - 0.4*(1 - reach)*cr;
   }
 
@@ -2420,7 +2424,7 @@ const R3 = (() => {
     if (g && g.flash > lastFlash + 0.5) launchFireworks();
     lastFlash = g ? g.flash : 0; stepFireworks(dt);
     drawBoard();
-    placePlayers(t);
+    placePlayers(t, dt);
     // ball in the air
     const b = g && g.ball && (g.ball.caught || t - g.ball.t0 <= g.ball.dur + 0.25) ? g.ball : null;
     ballMesh.visible = !!b;
@@ -2431,28 +2435,53 @@ const R3 = (() => {
     renderer.render(scene, cam);
     guard(dt);
   }
-  function placePlayers(t){
+  // motion, ported from Ghost Reps' mannequins: everything comes from how the game moved each player this
+  // frame. Facing turns toward where he runs (backpedals and shuffles stay square), stride and lean grow
+  // with speed, and sideways motion becomes a shuffle.
+  const motionByObj = new WeakMap(), motionByKey = new Map();
+  const wrap = a => ((a + Math.PI) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI) - Math.PI;
+  function motion(key, o, home, dt){
+    const store = typeof key === "string" ? motionByKey : motionByObj;
+    let m = store.get(key); if (!m){ m = {last: null, vx: 0, vz: 0, yaw: home, phase: Math.random()*6}; store.set(key, m); }
+    if (m.last && dt > 0){
+      const dx = o.x - m.last.x, dz = o.z - m.last.z;
+      if (Math.hypot(dx, dz) > 1.2){ m.vx = m.vz = 0; m.yaw = home; }                       // teleported to a new play
+      else { const k = Math.min(1, dt*10); m.vx += (dx/dt - m.vx)*k; m.vz += (dz/dt - m.vz)*k; }
+    }
+    m.last = {x: o.x, z: o.z};
+    const spd = Math.hypot(m.vx, m.vz), mv = Math.atan2(m.vx, -m.vz);
+    let want = o.fixedFace ? o.face : m.yaw;
+    if (!o.fixedFace){
+      if (spd > 1.2 && (Math.abs(wrap(mv - home)) < 1.2 || spd > 5.2)) want = mv;
+      else if (spd <= 1.2) want = o.face ?? home;
+    }
+    m.yaw += wrap(want - m.yaw)*Math.min(1, dt*9);
+    m.phase += spd*dt*2.7;
+    const fwd = m.vx*Math.sin(m.yaw) - m.vz*Math.cos(m.yaw), side = m.vx*Math.cos(m.yaw) + m.vz*Math.sin(m.yaw);
+    o.face = m.yaw;
+    if (spd > 0.3){ o.amp = Math.min(0.85, spd*0.14); o.anim = m.phase; o.sf = fwd/spd; o.ss = side/spd; o.lean = 0.1 + 0.32*Math.min(1, spd/7); }
+    return o;
+  }
+  function placePlayers(t, dt){
     const g = game; let n = 0;
-    const put = (team, num, o) => { if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, o); };
+    const put = (team, num, o, key, home = 0) => { if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, key != null && !o.down ? motion(key, o, home, dt) : o); };
     if (g && g.phase !== "opp"){
       const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
       const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") && g.pp ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
       const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset, live = g.phase === "live";
       for (let i = 0; i < 5; i++){
         let x = slots[i]; if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
-        put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0});
+        put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, fixedFace: true, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0}, "ol" + i, Math.PI);
       }
       for (let i = 0; i < 4; i++){
         let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
-        put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0});
+        put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, fixedFace: true, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0}, "dl" + i, 0);
       }
       const q = g.qb;
-      if (q) put("home", 7, {x: q.x, z: q.z, face: q.face, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach});
+      if (q) put("home", 7, {x: q.x, z: q.z, face: q.face, fixedFace: true, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach}, q, Math.PI);
       for (const d of g.defenders){
         const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
-        const moving = live && Math.hypot(d.vx, d.vz) > 0.5;
-        const face = moving ? clamp(Math.atan2(d.vx, -d.vz), -1.2, 1.2) : 0;
-        put("away", d.num, {x: d.x, z: d.z, face, down, run: moving ? 1 : live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" ? 0.8 : 0});
+        put("away", d.num, {x: d.x, z: d.z, down, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" ? 0.8 : 0}, d, 0);
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
