@@ -114,6 +114,18 @@ results.over = section("both arms overhead", 1.5, u => { const P = standing(), k
   P.lEl = [0.25, -0.22 - 0.6*k, 0]; P.rEl = [-0.25, -0.22 - 0.6*k, 0]; P.lWr = [0.25, 0.02 - 1.12*k, 0]; P.rWr = [-0.25, 0.02 - 1.12*k, 0];
   return {P, off: {x:0, y:0}}; });
 console.log("   overhead state:", BodyCore.state.overhead);
+// tired knees: warm up at full height, then march at about half the thigh lift. They should still step,
+// and each step should carry a lower knee height (h) than the warm-up ones.
+const march = deg => u => { const P = standing(), ph = u*2.3*Math.PI*2; thigh(P, "l", Math.max(0, Math.sin(ph))*deg); thigh(P, "r", Math.max(0, -Math.sin(ph))*deg); return {P, off: {x:0, y:0}}; };
+results.lowBefore = section("low knees, default thresholds", 3, march(48));
+BodyCore.captureStart("stand", 0); run(1, stand); BodyCore.captureStop();
+BodyCore.captureStart(["step"], 1); run(3, march(80)); BodyCore.captureStop();
+BodyCore.applyMoveTest(); run(0.5, stand);
+let s0 = log.length; results.highAfter = section("high knees after warm-up", 3, march(80)); const hHigh = log.slice(s0).filter(e => e.type === "step" && e.h != null).map(e => e.h);
+run(0.5, stand);
+s0 = log.length; results.lowAfter = section("tired knees after warm-up (48 deg)", 3, march(48)); const hLow = log.slice(s0).filter(e => e.type === "step" && e.h != null).map(e => e.h);
+const avg = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : 0;
+console.log("   knee height: high", avg(hHigh).toFixed(2), "tired", avg(hLow).toFixed(2));
 
 const n = (o, k) => o[k] || 0;
 const checks = [
@@ -139,6 +151,8 @@ const checks = [
   ["arm raises don't punch", !Object.keys({...results.raiseL, ...results.raiseR, ...results.raiseB}).some(k => k.startsWith("punch"))],
   ["duck fires once, no jump", n(results.duck, "duck") === 1 && !n(results.duck, "jump")],
   ["jump fires once, no hop or duck", n(results.jump, "jump") === 1 && !n(results.jump, "hop<") && !n(results.jump, "hop>") && !n(results.jump, "duck")],
+  ["tired knees (48 deg after an 80 deg warm-up) still step (5 or more in 3 s)", n(results.lowAfter, "stepL") + n(results.lowAfter, "stepR") >= 5],
+  ["tired knees carry a lower knee height than full ones", avg(hLow) > 0 && avg(hLow) < avg(hHigh) - 0.2 && avg(hHigh) > 0.8],
   ["no stray rip or swim", !Object.keys({...results.punchR, ...results.over}).some(k => k.startsWith("rip") || k.startsWith("swim"))],
 ];
 let fail = 0;

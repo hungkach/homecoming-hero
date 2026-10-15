@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16, run lanes and stiff arm cue</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, easier high knees</p>
   </div>
 </div>
 
@@ -219,7 +219,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 
 <script>
 /* =====================================================================
-   body core v0.4  (start)
+   body core v0.5  (start)
    Shared camera body tracking for the body arcade games.
    Copy this whole <script> block into another game. It uses no game
    globals; the game reads BodyCore.state, drains BodyCore events, and
@@ -227,7 +227,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
    ===================================================================== */
 const BodyCore = (() => {
   "use strict";
-  const VERSION = "0.4";
+  const VERSION = "0.5";
   const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const TARGET_FPS = 30;
@@ -364,7 +364,7 @@ const BodyCore = (() => {
   const recent = [];    // smoothed raw frames, last 2 s, for calibration
   const base = {ok: false, torso: 0, cx: 0, hipY: 0, shY: 0, noseY: 0, lean: 0, tilt: 0, knY: [0, 0], up: {x: 0, y: -1, z: 0}, pitch: [0, 0], yaw: 0};
   const state = {visible: false, stance: 0, depth: 0, cadence: 0, lateral: 0, turn: 0, lean: 0, armOut: {L: false, R: false}, overhead: false, overheadSince: 0};
-  let events = [], latency = 0, stepTimes = [], squatRef = 0.35;
+  let events = [], latency = 0, stepTimes = [], squatRef = 0.35, stepRef = 0.32;
   const lastHop = {dir: 0, t: -9};
 
   function smooth(dst, src, a){
@@ -456,13 +456,16 @@ const BodyCore = (() => {
     TRIGGERS.push(tr); return tr;
   }
   const S2 = [0, 1], SIDE = ["L", "R"];
-  // knee lift: one step of the march
+  // knee lift: one step of the march. Each step event carries h, how high that knee went on its last lift
+  // compared with your warm-up lifts (1 = your warm-up height), so a game can pay more for higher knees.
   for (const s of S2){ const o = 1 - s;
-    trigger("step", SIDE[s], [
+    const tr = trigger("step", SIDE[s], [
       {id: "pitch", on: 35, off: 18, calib: true, fn: F => wld && F.knOK[s] ? F.pitch[s] : null},
-      {id: "rise", on: 0.16, off: 0.07, calib: true, fn: F => F.knOK[s] ? F.kneeRise[s] : null},
-      {id: "lead", on: 0.14, off: 0.05, calib: true, fn: F => F.knOK[s] && F.knOK[o] ? F.kneeLead[s] : null}
-    ]);
+      // rise and lead grow with about the square of the thigh angle, so they're calibrated on a square-root scale
+      {id: "rise", on: 0.16, off: 0.07, calib: true, sq: true, fn: F => F.knOK[s] ? F.kneeRise[s] : null},
+      {id: "lead", on: 0.14, off: 0.05, calib: true, sq: true, fn: F => F.knOK[s] && F.knOK[o] ? F.kneeLead[s] : null}
+    ], {info: () => ({h: tr.lastPeak == null ? 1 : clamp(Math.sqrt(Math.max(0, tr.lastPeak)/stepRef), 0, 1.4)})});
+    tr.track = 1;   // the rise cue's peak while the knee is up
   }
   // hop, or a lateral bound: the whole body shifts sideways, feet included (a lean moves only the shoulders).
   // The move is the bound out from center; the step back to center right after it never counts,
@@ -554,6 +557,7 @@ const BodyCore = (() => {
   function runTrigger(tr, F){
     const vals = tr.cues.map(c => { const v = c.fn(F); return v == null || !isFinite(v) ? null : v; });
     tr.vals = vals;
+    if (tr.track != null && tr.active && vals[tr.track] != null) tr.peak = Math.max(tr.peak || 0, vals[tr.track]);
         capture(tr, vals);
 
     if (!base.ok) return;
@@ -569,6 +573,7 @@ const BodyCore = (() => {
       }
     } else if (off >= tr.need){
       tr.active = false;
+      if (tr.track != null){ if (tr.peak) tr.lastPeak = tr.peak; tr.peak = 0; }
       if (tr.type === "overhead") state.overhead = false;
     }
   }
@@ -666,15 +671,20 @@ const BodyCore = (() => {
       if (!good.length){ c.on = c.def.on; c.off = c.def.off; continue; }   // move not seen: keep defaults
       seen[tr.type] = true;
       const pk = Math.min(...good);
-      const on = clamp(r0 + 0.5*(pk - r0), c.def.on*0.45, c.def.on*1.5);   // forgiving: half of your weakest honest rep
-      c.on = on; c.off = Math.min(r0 + 0.25*(pk - r0), r0 + 0.5*(on - r0));
+      const f = tr.type === "step" ? 0.3 : 0.5;    // forgiving: half of your weakest honest rep, under a third for high knees (tired knees drop first)
+      const toS = v => c.sq ? Math.sqrt(Math.max(0, v)) : v, fromS = v => c.sq ? v*v : v;   // square-root cues: fractions of the angle, not the height
+      const R = toS(r0), PK = toS(pk);
+      const on = clamp(fromS(R + f*(PK - R)), c.def.on*(c.sq ? 0.2 : tr.type === "step" ? 0.35 : 0.45), c.def.on*1.5);
+      c.on = on; c.off = Math.min(fromS(R + 0.25*(PK - R)), fromS(R + 0.5*(toS(on) - R)));
     }
     if (peaks["level.drop"] && seen.level) squatRef = clamp(Math.max(...Object.values(peaks["level.drop"])), 0.15, 0.8);
+    const lifts = ["stepL.rise", "stepR.rise"].flatMap(k => Object.values(peaks[k] || {}));
+    if (lifts.length && seen.step) stepRef = clamp(lifts.reduce((a, b) => a + b, 0)/lifts.length, 0.15, 0.8);   // your typical warm-up lift
     for (const k in peaks) delete peaks[k];
     for (const k in rest){ delete rest[k]; delete restN[k]; }
     return seen;
   }
-  function resetThresholds(){ for (const tr of TRIGGERS) for (const c of tr.cues){ c.on = c.def.on; c.off = c.def.off; } squatRef = 0.35; }
+  function resetThresholds(){ for (const tr of TRIGGERS) for (const c of tr.cues){ c.on = c.def.on; c.off = c.def.off; } squatRef = 0.35; stepRef = 0.32; }
 
     /* ---------- framing check ----------
      Looks at one frame and returns the single most useful instruction.
@@ -729,7 +739,7 @@ const BodyCore = (() => {
 
   };
 })();
-/* ===================== body core v0.4  (end) ===================== */
+/* ===================== body core v0.5  (end) ===================== */
 </script>
 <script>
 (() => {
@@ -1443,7 +1453,8 @@ function announcerTick(){
 /* ============ input: touch / keyboard ============ */
 let mode = "touch";   // "touch" or "body"
 const input = {steps:[], juke:0, shoulder:false, stiff:false, punch:false, keyStance:false, jukeT:null, shoulderT:null, stiffT:null, punchT:null};
-function addStep(t){ input.steps.push(t); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
+// a step's worth: touch taps count 1; in body play a higher knee counts more (0.75 for a low lift up to 1.15)
+function addStep(t, h){ input.steps.push({t, w: h == null ? 1 : clamp(0.6 + 0.4*h, 0.75, 1.15)}); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
 // pointers are tracked one by one so pass pro can hold a stance with one thumb and punch with the other
 const pointers = new Map();
 cv.addEventListener("pointerdown", e => { pointers.set(e.pointerId, {x: e.clientX, y: e.clientY, t: now(), moved: false}); });
@@ -1691,7 +1702,7 @@ function pumpBody(){
   for (const e of BodyCore.drain()){
     if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
-    if (e.type === "step") addStep(e.t);
+    if (e.type === "step") addStep(e.t, e.h);
     else if (e.type === "hop" || e.type === "lean"){ input.juke = e.type === "lean" ? (e.side === "R" ? 1 : -1) : e.dir; input.jukeT = e.tEff; }   // a cut: lean or bound
     else if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
     else if (e.type === "raise"){
@@ -2151,7 +2162,7 @@ function updatePile(dt, t){
 /* ============ live play ============ */
 // measured camera plus screen delay; touch has none
 const LAT = () => mode === "body" ? BodyCore.latency : 0;
-function stepsPerSec(t){ while (input.steps.length && t - input.steps[0] > 1.2) input.steps.shift(); return input.steps.length/1.2; }
+function stepsPerSec(t){ while (input.steps.length && t - input.steps[0].t > 1.2) input.steps.shift(); return input.steps.reduce((a, s) => a + s.w, 0)/1.2; }
 // where a defender thinks you are and where you're heading, as of his reaction time ago
 function seenRunner(p, lag, t){
   const h = p.xHist, at = s => { for (let i = h.length - 1; i >= 0; i--) if (t - h[i].t >= s) return h[i]; return h[0] || {t, x: p.x, z: p.z}; };
@@ -2773,7 +2784,7 @@ function update(dt){
     }
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
-    if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
+    if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s.t < 0.4);
       g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
