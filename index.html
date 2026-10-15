@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16 PM, stronger blocks, easier knees</p>
+    <p class="diag" id="buildStamp">Build: Oct 16 PM, big play replays</p>
   </div>
 </div>
 
@@ -2243,6 +2243,7 @@ function endPlay(kind, extra){
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
   const gain = kind === "td" ? g.ballOn : Math.min(Math.round(p.z), g.ballOn - 1);   // short of the goal line stays short
   g.result = {kind, gain, mine: true};
+  g.bigPlay = (kind === "td" || gain >= 20) && R3.info.mode === "3d" && g.rec && g.rec.length > 15;   // gets a replay
   if (g.caught){ g.stats.catches++; g.stats.recYards += gain; }
   else { g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain); }
   if (kind === "td"){
@@ -2819,12 +2820,17 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s.t < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.rec = []; g.recT = 0; g.bigPlay = false; g.replay = null; g.deadT = 0; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
+    recordPlay(g, dt);
   } else if (g.phase === "dead"){
     g.t -= dt;
+    // the broadcast replay of a big play: it starts a beat after the whistle and holds the next snap until it's done
+    g.deadT = (g.deadT || 0) + dt;
+    if (g.bigPlay && !g.replay && g.deadT > 1.2){ g.bigPlay = false; g.replay = {f: g.rec, t: 0, dur: Math.min(6, g.rec.length/15)}; banner("", "", 0.01); }
+    if (g.replay){ g.replay.t += dt*0.7; g.t = Math.max(g.t, 0.4); if (g.replay.t >= g.replay.dur) g.replay = null; }
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
     if (g.t <= 0) afterPlay();
   } else if (g.phase === "opp"){
@@ -2839,6 +2845,25 @@ function update(dt){
   updateBoard();
 }
 
+/* ============ broadcast replay ============
+   Big plays (a touchdown or 20 yards) are recorded 15 times a second and replayed from a TV angle,
+   high and behind the runner, at 70 percent speed, during the break before the next snap. 3D only. */
+function recordPlay(g, dt){
+  if (g.playType !== "run" || !g.rec) return;
+  g.recT += dt; if (g.recT < 1/15) return; g.recT = 0;
+  g.rec.push({p: {x: g.p.x, z: g.p.z}, d: g.defenders.map(d => ({x: d.x, z: d.z, num: d.num, down: d.state === "down"})), b: (g.blockers || []).map(b => ({x: b.x, z: b.z, num: b.num, eng: !!b.engaged}))});
+}
+function replayFrame(r){
+  const k = Math.min(r.t*15, r.f.length - 1.001), i = Math.floor(k), u = k - i, A = r.f[i], B = r.f[i + 1] || A;
+  const mix = (a, b) => b ? {...a, x: lerp(a.x, b.x, u), z: lerp(a.z, b.z, u)} : a;
+  return {p: mix(A.p, B.p), d: A.d.map((x, j) => mix(x, B.d[j])), b: A.b.map((x, j) => mix(x, B.b[j]))};
+}
+function replayCam(c, r){
+  const F = replayFrame(r), x = F.p.x + 6, z = F.p.z - 9, h = 5.5;
+  c.x = x; c.z = z; c.h = h; c.yaw = Math.atan2(F.p.x - x, F.p.z - z); c.pitch = Math.atan2(h - 1, Math.hypot(F.p.x - x, F.p.z - z)); c.hor = H*0.5;
+  return c;
+}
+
 /* ============ rendering ============ */
 let crowdDots = [];
 function makeCrowd(){
@@ -2851,6 +2876,7 @@ function camState(in3D){
   const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
   const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
   const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
+  if (in3D && g && g.replay) return replayCam(c, g.replay);
   return in3D && g && g.offense ? preSnapCam(g, c) : c;
 }
 // yaw turns your head (+ is right); the 3D camera turns the same way, so 2D overlays stay on the 3D world
@@ -3245,9 +3271,15 @@ function render(t){
       if (q){ cx.fillStyle = COL.ball; cx.beginPath(); cx.ellipse(q.x, q.y, Math.max(3, q.s*0.28), Math.max(2, q.s*0.16), -0.4, 0, 7); cx.fill(); }
     }
   }
-  drawCues(c, t, !in3D);
+  const replaying = game && game.replay && in3D;
+  if (!replaying) drawCues(c, t, !in3D);
   cx.restore();
-  drawSelf(c, t);
+  if (!replaying) drawSelf(c, t);
+  else {
+    const fs = Math.round(Math.min(W, H)*0.06); cx.font = `700 ${fs}px system-ui, sans-serif`; cx.textAlign = "left"; cx.textBaseline = "middle";
+    const w = cx.measureText("Replay").width + fs*1.6; cx.fillStyle = "rgba(200,30,40,0.9)"; cx.fillRect(16, H*0.2, w, fs*1.6);
+    cx.fillStyle = "#fff"; cx.fillText("▶ Replay", 16 + fs*0.4, H*0.2 + fs*0.8);
+  }
   if (game && game.flash > 0){ cx.fillStyle = `rgba(255,207,63,${game.flash*0.15})`; cx.fillRect(0, 0, W, H); }
   drawPip();
 }
@@ -3609,7 +3641,7 @@ const R3 = (() => {
     venue.position.z = -(ballOn - 50);
     // camera matches the 2D projection exactly, so 2D overlays line up with 3D players
     const sh = g && g.shake > 0 ? g.shake*0.12 : 0;
-    cam.position.set(c.x + rand(-1, 1)*sh, c.h + rand(-1, 1)*sh, -c.z); cam.rotation.set(0, -(c.yaw || 0), 0);
+    cam.position.set(c.x + rand(-1, 1)*sh, c.h + rand(-1, 1)*sh, -c.z); cam.rotation.order = "YXZ"; cam.rotation.set(-(c.pitch || 0), -(c.yaw || 0), 0);
     cam.fov = 2*Math.atan((H/2)/c.F)*180/Math.PI; cam.aspect = W/H;
     cam.setViewOffset(W, H, 0, H/2 - c.hor, W, H); cam.updateProjectionMatrix();
     // lines and arrow
@@ -3668,6 +3700,15 @@ const R3 = (() => {
   function placePlayers(t, dt){
     const g = game; let n = 0;
     const put = (team, num, o, key, home = 0) => { if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, key != null && !o.down ? motion(key, o, home, dt) : o); };
+    if (g && g.replay){
+      // the replay: you, your blockers, and their defense, as recorded
+      const F = replayFrame(g.replay);
+      put("home", 22, {x: F.p.x, z: F.p.z, run: 0, anim: t*8, crouch: 0.1, reach: 0}, "rpRB", Math.PI);
+      F.b.forEach((b, i) => put("home", b.num, {x: b.x, z: b.z, run: 0, anim: t*6 + i, crouch: b.eng ? 0.45 : 0.15, reach: b.eng ? 0.8 : 0}, "rpB" + i, Math.PI));
+      F.d.forEach((d, i) => put("away", d.num, {x: d.x, z: d.z, down: d.down, run: 0, anim: t*6 + i, crouch: 0.15, reach: 0}, "rpD" + i, 0));
+      for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
+      return;
+    }
     if (g && g.phase !== "opp"){
       const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
       const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") && g.pp ? clamp(g.pp.liveT/0.4, 0, 1) : 0;

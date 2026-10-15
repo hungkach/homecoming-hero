@@ -35,6 +35,10 @@ More ways to get the ball in space:
 - Halfback screen: sell the block for a beat while the rush runs past you, drift to the flat, catch the short throw, then follow the linemen who release in front of you. It shows up on early downs too.
 - Halfback motion: before the snap you jog out to the slot (a few seconds of rest), then run a slant, an out, or the seam against the defender over you. The seam has no break: keep running and the ball comes over your shoulder.
 
+## Replays
+
+A touchdown or a run of 20 yards or more gets a TV replay in the break before the next snap: a high angle behind you at 70 percent speed, with your blockers and their defense as they really moved (3D view only). It doubles as a few seconds of rest.
+
 ## Pacing
 
 There's no heart rate monitor, so the game estimates how hard you've been working from your recent live seconds. After a big play (15 yards or more) or an unusually hard stretch, the next play sneaks in a little rest: a receiver goes in motion before the snap (your eyes follow him across, about 2 extra seconds), and the booth is more likely to get a joke in while the offense lines up. When run after run gets stuffed, the defense eases off a little (slower reads, a step slower) until you break one again. Nothing gets harder for playing well. A touchdown already gives you the Raiders' possession to rest.
