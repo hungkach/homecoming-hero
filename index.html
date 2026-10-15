@@ -135,7 +135,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <select id="workout"><option value="15">15 minutes</option><option value="20" selected>20 minutes</option><option value="25">25 minutes</option><option value="30">30 minutes</option></select>
     </label>
     <label class="toggle"><input type="checkbox" id="voiceOn" checked> Spoken play calls</label>
-    <label class="toggle"><input type="checkbox" id="studioOn"> Studio voices (natural voices, about a 110 MB download the first time)</label>
+    <label class="toggle"><input type="checkbox" id="studioOn"> Studio voices (natural voices, a one-time download of about 130 MB on Wi-Fi)</label>
     <p class="note" id="studioStatus" hidden></p>
     <label class="pick" for="booth">Announcer
       <select id="booth"><option value="dark">After dark: dark and blue</option><option value="family">Family: clean jokes</option><option value="off">Off</option></select>
@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, warm-up demo figure</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, Piper studio voices</p>
   </div>
 </div>
 
@@ -1090,18 +1090,20 @@ function playClip(clip, booth){
 }
 
 /* ---------- Studio voices ----------
-   Kokoro, an open-source neural voice (Apache 2.0), running in a background worker so it never stalls
-   the game or the body tracker. The model (about 110 MB with its runtime) downloads once from the
-   Hugging Face CDN and the browser keeps it. Every finished line is saved on the device too, so the
-   next session starts with them. Lines are made in the gaps: never during a live play, the snap count,
-   or the timed parts of the warm-up. Anything not ready yet uses the device voice. */
+   Piper, an open-source neural voice (MIT), running in a background worker so it never stalls the game
+   or the body tracker. Each voice is about 63 MB from the Hugging Face CDN, downloaded once and kept on
+   the device: the coach voice first (play calls are ready sooner), then the booth's. The text-to-sound
+   step runs on ONNX Runtime with the espeak phonemizer, both from jsdelivr. Every finished line is saved
+   on the device too, so the next session starts with them. Lines are made in the gaps: never during a live
+   play, the snap count, or the timed parts of the warm-up. Anything not ready yet uses the device voice. */
 const Studio = (() => {
-  const LIB = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js";
-  const MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
-  const VOICE = {coach: "am_michael", booth: "af_heart"}, SPEED = {coach: 1.0, booth: 1.08};
-  const CACHE = "hh-studio-v1";
+  const ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/";
+  const PHON = "https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize";
+  const HF = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/";
+  const VOICE = {coach: "ryan/medium/en_US-ryan-medium.onnx", booth: "lessac/medium/en_US-lessac-medium.onnx"}, SPEED = {coach: 1.08, booth: 1.12};
+  const CACHE = "hh-studio-v2", MODELS = "hh-piper-v1";
   const clips = new Map(), wanted = new Map();
-  let worker = null, state = "off", progress = 0, err = "", busyKey = null, made = 0, fails = 0, lastErr = "", genAt = 0, genSecs = [];
+  let worker = null, state = "off", progress = 0, loadingWho = "coach", err = "", busyKey = null, made = 0, fails = 0, lastErr = "", genAt = 0, genSecs = [];
   const who = booth => booth ? "booth" : "coach";
   const key = (text, booth) => who(booth) + "|" + text;
   const url = k => "https://studio.homecoming.hero/" + encodeURIComponent(k);
@@ -1114,6 +1116,16 @@ const Studio = (() => {
     new Int16Array(b, 44).set(pcm); return b;
   }
   const fromWav = b => ({sr: new DataView(b).getUint32(24, true), pcm: new Int16Array(b.slice(44))});
+  // the old Kokoro voice: its saved lines and its model files go, to free the space
+  async function cleanOld(){
+    try{
+      await caches.delete("hh-studio-v1");
+      if ((await caches.keys()).includes("transformers-cache")){
+        const c = await caches.open("transformers-cache");
+        for (const r of await c.keys()) if (/Kokoro/i.test(r.url)) await c.delete(r);
+      }
+    }catch(e){}
+  }
   async function loadSaved(){
     try{
       const c = await caches.open(CACHE);
@@ -1124,42 +1136,84 @@ const Studio = (() => {
     }catch(e){}
   }
   async function save(k, clip){ try{ const c = await caches.open(CACHE); await c.put(url(k), new Response(toWav(clip.pcm, clip.sr), {headers: {"Content-Type": "audio/wav"}})); }catch(e){} }
+  // the worker: a classic one, so it can load the two CDN scripts with importScripts
   const WORKER = `
-    let tts = null;
+    let phon = null, out = null, M = null, uses = 0, wasm = null, data = null;
+    // the espeak phonemizer gives out after about 70 lines in one instance, so a fresh one (about 30 ms) every 30
+    const freshPhon = async () => { phon = await createPiperPhonemize({print: d => { out = d; }, printErr: () => {}, wasmBinary: wasm, getPreloadedPackage: () => data, noInitialRun: true}); uses = 0; };
+    async function phonemes(text, voice){
+      for (let tries = 0; ; tries++){
+        if (!phon || uses >= 30) await freshPhon();
+        uses++; out = null;
+        try{ phon.callMain(["-l", voice, "--input", JSON.stringify([{text}]), "--espeak_data", "/espeak-ng-data"]); if (out) return JSON.parse(out).phoneme_ids; }catch(e){ if (tries) throw e; }
+        phon = null;
+      }
+    }
+    const sessions = {}, cfgs = {};
+    async function grab(cache, u, who, big){
+      let r = await cache.match(u);
+      if (!r){
+        const res = await fetch(u); if (!res.ok) throw new Error("download failed (" + res.status + ")");
+        const total = +(res.headers.get("Content-Length") || 0), reader = res.body.getReader(), parts = []; let got = 0;
+        for (;;){ const {done, value} = await reader.read(); if (done) break; parts.push(value); got += value.length;
+          if (big) self.postMessage({type: "progress", who, loaded: got, total}); }
+        await cache.put(u, new Response(new Blob(parts)));
+        r = await cache.match(u);
+      }
+      return r.arrayBuffer();
+    }
+    async function load(who){
+      const cache = await caches.open(M.models);
+      cfgs[who] = JSON.parse(new TextDecoder().decode(await grab(cache, M.hf + M.voice[who] + ".json", who, false)));
+      sessions[who] = await ort.InferenceSession.create(new Uint8Array(await grab(cache, M.hf + M.voice[who], who, true)), {executionProviders: ["wasm"]});
+    }
     self.onmessage = async (e) => {
       const m = e.data;
       if (m.type === "init"){
         try{
-          const { KokoroTTS } = await import(m.lib);
-          tts = await KokoroTTS.from_pretrained(m.model, { dtype: "q8", device: "wasm",
-            progress_callback: (p) => { if (p && p.status === "progress" && p.total > 1e6) self.postMessage({ type: "progress", file: p.file, loaded: p.loaded, total: p.total }); } });
-          self.postMessage({ type: "ready" });
-        }catch(err){ self.postMessage({ type: "error", msg: String(err && err.message || err) }); }
+          M = m;
+          importScripts(m.ort + "ort.wasm.min.js", m.phon + ".js");
+          ort.env.wasm.wasmPaths = m.ort; ort.env.wasm.numThreads = 1;
+          const cache = await caches.open(m.models);
+          wasm = await grab(cache, m.phon + ".wasm", "engine", false); data = await grab(cache, m.phon + ".data", "engine", false);
+          await freshPhon();
+          await load("coach");
+          self.postMessage({type: "ready"});
+        }catch(err){ self.postMessage({type: "error", msg: String(err && err.message || err)}); }
       } else if (m.type === "gen"){
         try{
-          const a = await tts.generate(m.text, { voice: m.voice, speed: m.speed });
-          const f = a.audio, pcm = new Int16Array(f.length);
-          for (let i = 0; i < f.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(f[i]*32767)));
-          self.postMessage({ type: "clip", key: m.key, sr: a.sampling_rate, pcm }, [pcm.buffer]);
-        }catch(err){ self.postMessage({ type: "genError", key: m.key, msg: String(err && err.message || err) }); }
+          if (!sessions[m.who]){ self.postMessage({type: "loading", who: m.who}); await load(m.who); self.postMessage({type: "loaded", who: m.who}); }
+          const cfg = cfgs[m.who], ids = await phonemes(m.text, cfg.espeak.voice), inf = cfg.inference;
+          const feeds = {input: new ort.Tensor("int64", BigInt64Array.from(ids.map(BigInt)), [1, ids.length]), input_lengths: new ort.Tensor("int64", BigInt64Array.from([BigInt(ids.length)]), [1]),
+            scales: new ort.Tensor("float32", Float32Array.from([inf.noise_scale, inf.length_scale/m.speed, inf.noise_w]), [3])};
+          if (Object.keys(cfg.speaker_id_map || {}).length) feeds.sid = new ort.Tensor("int64", BigInt64Array.from([0n]), [1]);
+          const f = (await sessions[m.who].run(feeds)).output.data;
+          let peak = 0; for (let i = 0; i < f.length; i++) peak = Math.max(peak, Math.abs(f[i]));
+          const k = peak > 0 ? 0.9/peak : 1, pcm = new Int16Array(f.length);
+          for (let i = 0; i < f.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(f[i]*k*32767)));
+          self.postMessage({type: "clip", key: m.key, sr: cfg.audio.sample_rate, pcm}, [pcm.buffer]);
+        }catch(err){ self.postMessage({type: "genError", key: m.key, msg: String(err && err.message || err)}); }
       }
     };`;
   async function start(){
     if (!enabled() || state === "loading" || state === "ready") return;
     if (!window.Worker || !window.caches || !window.isSecureContext){ state = "failed"; err = "This browser can't run studio voices."; return; }
-    state = "loading"; progress = 0; err = "";
+    state = "loading"; progress = 0; loadingWho = "coach"; err = "";
+    await cleanOld();
     await loadSaved();
     try{
-      worker = new Worker(URL.createObjectURL(new Blob([WORKER], {type: "text/javascript"})), {type: "module"});
+      worker = new Worker(URL.createObjectURL(new Blob([WORKER], {type: "text/javascript"})));
       worker.onmessage = onMsg;
       worker.onerror = e => { state = "failed"; err = "The voice engine didn't start."; };
-      worker.postMessage({type: "init", lib: LIB, model: MODEL});
+      worker.postMessage({type: "init", ort: ORT, phon: PHON, hf: HF, voice: VOICE, models: MODELS});
     }catch(e){ state = "failed"; err = "The voice engine didn't start."; }
   }
   function onMsg(e){
     const m = e.data;
-    if (m.type === "progress") progress = m.total ? m.loaded/m.total : 0;
-    else if (m.type === "ready"){ state = "ready"; prewarm(); }
+    if (m.type === "progress"){ progress = m.total ? m.loaded/m.total : 0; loadingWho = m.who; genAt = now(); }   // a download in progress isn't a stall
+    else if (m.type === "loading"){ loadingWho = m.who; progress = 0; }
+    else if (m.type === "loaded") loadingWho = null;
+    else if (m.type === "ready"){ state = "ready"; loadingWho = null; prewarm(); }
     else if (m.type === "error"){ state = "failed"; err = "Studio voices didn't load (" + m.msg.slice(0, 80) + "). Using device voices."; }
     else if (m.type === "clip"){ const c = {sr: m.sr, pcm: m.pcm}; clips.set(m.key, c); save(m.key, c); wanted.delete(m.key); busyKey = null; made++;
       genSecs.push(now() - genAt); if (genSecs.length > 10) genSecs.shift(); }
@@ -1174,7 +1228,7 @@ const Studio = (() => {
     let best = null; for (const [k, w] of wanted) if (!best || w.pri < best.pri) best = w;
     if (clips.has(best.key)){ wanted.delete(best.key); return; }
     busyKey = best.key; genAt = now();
-    worker.postMessage({type: "gen", key: best.key, text: best.text, voice: VOICE[best.who], speed: SPEED[best.who]});
+    worker.postMessage({type: "gen", key: best.key, text: best.text, who: best.who, speed: SPEED[best.who]});
   }
   function want(text, booth, pri = 0){
     if (!enabled() || state === "failed" || !text) return;
@@ -1185,8 +1239,8 @@ const Studio = (() => {
   }
   // what to make first: play calls and coaching, then the booth's lines for the current mode
   function prewarm(){
-    const coach = [...PLAYS.flatMap(p => [p.say, ...Object.values(FRONT_TIP).map(t => p.say + " " + t)]), ...PASS_PLAYS.map(p => p.say), ...ROUTE_PLAYS.map(p => p.say),
-      "Down. Set. Hut!", "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
+    const calls = [...PLAYS, ...PASS_PLAYS, ...ROUTE_PLAYS].flatMap(p => [1, 2].map(n => huddleCall({play: p, count: n})));
+    const coach = [...calls, ...Object.values(FRONT_CALL).map(f => f[0]), ...CADENCE_WORDS.flatMap(w => CADENCE_NUMS.map(n => `Down! Set! ${w} ${n}!`)), "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
       "Punt.", "The kick is good!", "No good.", "Homecoming win! Mustangs take it.", "Final score.",
       "Raiders march down and score a touchdown.", "Raiders kick a field goal.", "Mustangs defense forces a punt.", "Interception! The Mustangs defense takes it back."];
     const warm = [WARM_STAND, ...WARM_MOVES].map(m => m.say).concat(["Round 1.", "Round 2.", "One more round.", "Locked in.", "You're set.", "Step back", "Step closer", "Step left", "Step right",
@@ -1198,10 +1252,11 @@ const Studio = (() => {
   }
   function status(){
     if (!enabled()) return "";
-    if (state === "loading") return progress > 0 ? `Studio voices: downloading ${Math.round(progress*100)} percent` : (clips.size ? `Studio voices: ${clips.size} lines saved, starting the voice engine` : "Studio voices: starting the download");
+    if (state === "loading") return progress > 0 ? `Studio voices: downloading the coach voice, ${Math.round(progress*100)} percent` : (clips.size ? `Studio voices: ${clips.size} lines saved, starting the voice engine` : "Studio voices: starting the download");
     if (state === "failed") return err;
     if (state === "ready"){
       const avg = genSecs.length ? genSecs.reduce((a, b) => a + b, 0)/genSecs.length : 0;
+      if (loadingWho === "booth") return `Studio voices: ${clips.size} lines ready. Downloading the booth voice, ${Math.round(progress*100)} percent.`;
       const pace = busyKey ? ` Making the next one (${Math.round(now() - genAt)} s so far${avg ? `, about ${avg.toFixed(1)} s a line` : ""}).` : avg ? ` About ${avg.toFixed(1)} s a line.` : "";
       const bad = fails ? ` ${fails} failed: ${lastErr}` : "";
       return (wanted.size ? `Studio voices: ${clips.size} lines ready, ${wanted.size} to go.` : `Studio voices: all ${clips.size} lines ready.`) + pace + bad;
