@@ -82,6 +82,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   display:grid;justify-items:center;gap:clamp(6px,1.4vh,12px);pointer-events:none;text-align:center}
 .pcTag{font:400 clamp(18px,3.4vh,32px)/1 var(--slab);color:#1a1408;background:var(--gold);padding:6px 16px 8px;border-radius:999px;transform:rotate(-3deg);
   box-shadow:0 4px 0 #a5841f;animation:pcPop .35s cubic-bezier(.2,1.6,.4,1) both}
+.pcCall{font:700 clamp(18px,3.6vh,32px)/1 var(--cond);color:var(--gold);letter-spacing:.04em;text-shadow:0 2px 0 #000;animation:pcPop .35s .05s cubic-bezier(.2,1.6,.4,1) both}
 .pcName{font:400 clamp(34px,8.5vh,84px)/1 var(--slab);color:#fff;text-shadow:0 4px 0 var(--away),0 0 24px rgba(0,0,0,.7);text-wrap:balance;animation:pcPop .4s .1s cubic-bezier(.2,1.6,.4,1) both}
 .pcSteps{display:flex;flex-wrap:wrap;justify-content:center;gap:clamp(6px,1.4vh,12px);margin:0;padding:0;list-style:none}
 .pcSteps li{display:flex;align-items:center;gap:10px;background:var(--card);border:2px solid var(--gold);border-radius:16px;padding:clamp(6px,1.2vh,10px) 14px clamp(6px,1.2vh,10px) 8px;
@@ -107,7 +108,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   <div class="situation" id="situation">1st &amp; 10 · own <span class="yl">25</span></div>
 </div>
 <div class="banner" id="banner" hidden><div class="big" id="bannerBig"></div><div class="small" id="bannerSmall"></div></div>
-<div class="playCard" id="playCard" hidden><div class="pcTag" id="pcTag"></div><div class="pcName" id="pcName"></div><ol class="pcSteps" id="pcSteps"></ol></div>
+<div class="playCard" id="playCard" hidden><div class="pcTag" id="pcTag"></div><div class="pcCall" id="pcCall"></div><div class="pcName" id="pcName"></div><ol class="pcSteps" id="pcSteps"></ol></div>
 <div class="hint" id="hint" hidden></div>
 <button class="pauseBtn" id="pauseBtn" type="button" aria-label="Pause" hidden>II</button>
 
@@ -140,7 +141,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, pass pro squat hold</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, real play calls and cadence</p>
   </div>
 </div>
 
@@ -729,25 +730,25 @@ const IDX = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lK
 const COL = {home:"#1f5fbf", homeDark:"#163f80", away:"#b3262e", awayDark:"#7a161c", gold:"#ffcf3f", turfA:"#2f7d3a", turfB:"#2a7034",
   apron:"#21502a", line:"rgba(255,255,255,.9)", skin:"#c68a5e", skinDark:"#8f5b39", ball:"#7a3f1d", pants:"#e9e4d8", ink:"#f7f3ea"};
 const PLAYS = [
-  {name:"Inside zone right", scheme:"zone", hole: 2.2, say:"Inside zone right. Hole is right."},
-  {name:"Inside zone left", scheme:"zone", hole:-2.2, say:"Inside zone left. Hole is left."},
-  {name:"Dive", scheme:"dive", hole: 0, say:"Dive. Hit it straight up the middle."},
-  {name:"Power right", scheme:"power", hole: 3.6, say:"Power right. Follow your guard."},
-  {name:"Power left", scheme:"power", hole:-3.6, say:"Power left. Follow your guard."},
-  {name:"Toss sweep right", scheme:"toss", hole: 7, say:"Toss sweep right. Get to the edge."},
-  {name:"Toss sweep left", scheme:"toss", hole:-7, say:"Toss sweep left. Get to the edge."}
+  {name:"Inside zone right", call:"Ace right, 24 zone", scheme:"zone", hole: 2.2, say:"Inside zone right. Hole is right."},
+  {name:"Inside zone left", call:"Ace left, 23 zone", scheme:"zone", hole:-2.2, say:"Inside zone left. Hole is left."},
+  {name:"Dive", call:"Ace, 21 dive", scheme:"dive", hole: 0, say:"Dive. Hit it straight up the middle."},
+  {name:"Power right", call:"I right, 26 power", scheme:"power", hole: 3.6, say:"Power right. Follow your guard."},
+  {name:"Power left", call:"I left, 27 power", scheme:"power", hole:-3.6, say:"Power left. Follow your guard."},
+  {name:"Toss sweep right", call:"Twins right, 28 toss", scheme:"toss", hole: 7, say:"Toss sweep right. Get to the edge."},
+  {name:"Toss sweep left", call:"Twins left, 29 toss", scheme:"toss", hole:-7, say:"Toss sweep left. Get to the edge."}
 ];
 // 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, both arms out on contact, anchor.
 // 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, go up for the catch.
 const ROUTE_PLAYS = [
-  {name: "Angle route right", route: true, dir: 1, lane: -1.5, stem: 4, hole: 99, say: "Angle route right. Sprint to the cone, then break right."},
-  {name: "Angle route left", route: true, dir: -1, lane: 1.5, stem: 4, hole: 99, say: "Angle route left. Sprint to the cone, then break left."},
-  {name: "Flat route right", route: true, dir: 1, lane: 2.5, stem: 1.5, hole: 99, say: "Flat route right. Break right at the cone."},
-  {name: "Flat route left", route: true, dir: -1, lane: -2.5, stem: 1.5, hole: 99, say: "Flat route left. Break left at the cone."}
+  {name: "Angle route right", call: "Gun trips right, Y cross, halfback angle", route: true, dir: 1, lane: -1.5, stem: 4, hole: 99, say: "Angle route right. Sprint to the cone, then break right."},
+  {name: "Angle route left", call: "Gun trips left, Y cross, halfback angle", route: true, dir: -1, lane: 1.5, stem: 4, hole: 99, say: "Angle route left. Sprint to the cone, then break left."},
+  {name: "Flat route right", call: "Gun right, smash, halfback flat", route: true, dir: 1, lane: 2.5, stem: 1.5, hole: 99, say: "Flat route right. Break right at the cone."},
+  {name: "Flat route left", call: "Gun left, smash, halfback flat", route: true, dir: -1, lane: -2.5, stem: 1.5, hole: 99, say: "Flat route left. Break left at the cone."}
 ];
 const PASS_PLAYS = [
-  {name: "Max protect", hole: 99, pass: true, say: "Pass protection. Find the blitzer."},
-  {name: "Scat protection", hole: 99, pass: true, say: "Pass pro. Pick up the blitz."}
+  {name: "Max protect", call: "Gun right, 76 max protect", hole: 99, pass: true, say: "Pass protection. Find the blitzer."},
+  {name: "Scat protection", call: "Gun trips left, 62 scat", hole: 99, pass: true, say: "Pass pro. Pick up the blitz."}
 ];
 
 if (!CanvasRenderingContext2D.prototype.roundRect){
@@ -877,7 +878,13 @@ const sfx = {
   hit(){ noise(0.25, 500, 0.6); tone(120, 45, 0.25, 0.5); },
   pads(){ noise(0.12, 2200, 0.35, "bandpass"); tone(220, 90, 0.12, 0.3, "square"); },
   whoosh(){ noise(0.25, 1600, 0.25, "highpass"); },
-  hut(){ tone(160, 120, 0.12, 0.25, "sawtooth"); },
+  // a barked "hut": a buzzy voice through two vowel formants, with a breathy attack
+  hut(){ if (!AC) return; const t0 = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(), f1 = AC.createBiquadFilter(), f2 = AC.createBiquadFilter();
+    o.type = "sawtooth"; o.frequency.setValueAtTime(180, t0); o.frequency.exponentialRampToValueAtTime(130, t0 + 0.16);
+    f1.type = "bandpass"; f1.frequency.value = 650; f1.Q.value = 5; f2.type = "bandpass"; f2.frequency.value = 1150; f2.Q.value = 6;
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.9, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18);
+    o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g); g.connect(master); o.start(t0); o.stop(t0 + 0.2);
+    noise(0.05, 2500, 0.2, "highpass"); },
   // rising zip, panned to the side the rusher is spinning toward
   counter(side){
     if (!AC) return;
@@ -1009,9 +1016,9 @@ const speechSecs = text => text.length/14 + 0.3;
 function say(text, force){
   if (!$("voiceOn").checked || !window.speechSynthesis) return;
   const t = now(); if (!force && t - lastSpoke < 1.6) return;
-  if (boothTalking() && !force) return;
+  if (voiceBusy() && !force) return;   // small calls never talk over anyone
   lastSpoke = t;
-  speak(text, false, boothTalking());
+  speak(text, false, voiceBusy());     // important calls wait their turn instead of cutting anyone off
 }
 // the booth uses a different voice than the coach when the device has one, pitched up and quicker
 function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= voiceScore(voices[0]) - 12 && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
@@ -1020,7 +1027,8 @@ function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= v
    device's speech otherwise. queue: wait for whatever is playing instead of cutting it off. */
 const voiceQ = [];
 let clipSrc = null, clipUntil = 0, voiceBus = null;
-const voiceBusy = () => { let b = now() < clipUntil; try{ b = b || speechSynthesis.speaking || speechSynthesis.pending; }catch(e){} return b; };
+const voicePlaying = () => { let b = now() < clipUntil; try{ b = b || speechSynthesis.speaking || speechSynthesis.pending; }catch(e){} return b; };
+const voiceBusy = () => voicePlaying() || voiceQ.length > 0;   // talking, or a line is waiting its turn
 function stopVoices(){
   voiceQ.length = 0;
   try{ speechSynthesis.cancel(); }catch(e){}
@@ -1028,11 +1036,11 @@ function stopVoices(){
   clipUntil = 0; boothUntil = Math.min(boothUntil, now());
 }
 function speak(text, booth, queue){
-  if (queue && voiceBusy()){ voiceQ.push({text, booth}); return; }
+  if (queue && voiceBusy()){ voiceQ.push({text, booth}); return; }   // behind anything playing or already waiting
   if (!booth && !queue) stopVoices();
   startLine(text, booth);
 }
-function voiceTick(){ if (voiceQ.length && !voiceBusy()){ const v = voiceQ.shift(); startLine(v.text, v.booth); } }
+function voiceTick(){ if (voiceQ.length && !voicePlaying()){ const v = voiceQ.shift(); startLine(v.text, v.booth); } }
 function startLine(text, booth){
   const clip = Studio.clip(text, booth);
   if (clip && AC){ playClip(clip, booth); return; }
@@ -1586,7 +1594,7 @@ function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; }
 
 function startHuddle(newDrive){
   const g = game;
-  g.phase = "huddle"; g.t = g.huddleLen = mode === "body" ? 11 : 8; g.broke = false;
+  g.phase = "huddle"; g.t = g.huddleLen = 6; g.broke = false;
   // 4th down: the coach decides between going for it, a field goal, and a punt
   if (g.down === 4 && !window.__hhForcePass && !window.__hhForceRoute){ const k = fourthDown(); if (k !== "go"){ specialTeams(k); return; } }
   const call = callPlay();
@@ -1605,26 +1613,32 @@ function startHuddle(newDrive){
   if (g.playType === "route") setupRoute();
   g.offense = makeOffense();
   updateBoard();
-  const tip = FRONT_TIP[g.front];
-  if (g.playType === "run") banner(g.play.name, tip || (newDrive ? "New drive. Catch your breath." : "Huddle up. Catch your breath."), 2.5);
-  else playCard();
-  say(g.play.say + (tip && g.playType === "run" ? " " + tip : ""), true);
-  if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0){
-    // the welcome gets its own time: the first huddle stretches to fit it after the play call
-    if (announce("open", {force: true, delay: 0.2})){ const x = speechSecs(annQ[annQ.length - 1].text) + speechSecs(g.play.say); g.t = g.huddleLen = Math.max(g.huddleLen, x + 1); annQ[annQ.length - 1].until += x; }
-  }
-  else if (g.down >= 3 && g.toGo >= 5) announce("third", {chance: 0.6, delay: 0.2});
-  else announce("huddle", {chance: 0.3, delay: 0.2});
+  playCard();
+  // the QB's call in the huddle: formation, play, and snap count; the huddle lasts as long as the call takes
+  g.count = Math.random() < 0.2 ? 2 : 1;
+  g.pre = {stage: "huddle", t: 0};
+  // the welcome goes first on the opening play, and the call waits for it
+  if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0 && boothMode() !== "off" && $("voiceOn").checked){ lastSpoke = now(); speak(pickCall("open"), true); g.pre.max = 16; }
+  say(huddleCall(g), true);
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
 }
 // 3rd and long gets a big card in the huddle: what the play is and the three moves, in order
+// the official call: "Ace right, 24 zone, on one. Ready, break!"
+const huddleCall = g => `${g.play.call || g.play.name}, on ${g.count === 2 ? "two" : "one"}. Ready, break!`;
+// at the line the QB identifies the front, so the defense call comes when you can see it
+const FRONT_CALL = {"goal line": ["Goal line! Goal line!", "Low pads"], nickel: ["Nickel! Nickel!", "Light box"], "cover 2": ["Two high! Two high!", "Two deep safeties"], "run blitz": ["Mike's hot! Mike's hot!", "Watch the blitz"]};
+const CADENCE_WORDS = ["Blue", "Red", "Green", "White"], CADENCE_NUMS = [18, 42, 54, 80];
 function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
-  const steps = g.playType === "route"
+  const side = g.play.hole > 0.5 ? "right" : g.play.hole < -0.5 ? "left" : "up the middle", runArrow = g.play.hole > 0.5 ? "↗️" : g.play.hole < -0.5 ? "↖️" : "⬆️";
+  const steps = g.playType === "run"
+    ? [["🏃", touch ? "Tap fast" : "High knees"], [runArrow, g.play.scheme === "toss" ? `Get to the edge, ${side}` : g.play.scheme === "dive" ? "Hit it up the middle" : `Hole is ${side}. Follow the green.`], ["⬇️", touch ? "Swipe down to truck" : "Squat or duck to truck"]]
+    : g.playType === "route"
     ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Bound to break"], ["🙌", touch ? "Swipe up to catch" : "Jump to catch"]]
     : [["⬇️", touch ? "Hold a thumb down before he gets there" : "Quarter squat before he gets there"], ["⏱️", touch ? "Keep holding" : "Hold the squat"], ["👐", touch ? "Tap as he hits (bonus)" : "Both arms out as he hits (bonus)"]];
   $("pcTag").textContent = `${ord(g.down)} and ${g.toGo >= g.ballOn ? "goal" : g.toGo}`;
   $("pcName").textContent = g.play.name;
+  $("pcCall").textContent = g.play.call || "";
   $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");
   $("playCard").hidden = false;
 }
@@ -1742,12 +1756,13 @@ function spawnDefense(){
    line while you walk up to your spot, and you scan the defense left and right before the snap.
    Drawn in 3D; the timing is the same in 2D, which keeps its simpler view. */
 const HUDDLE = {x: 0, z: -9.5, r: 1.7};
+const LINEUP = 1.3, SURVEY = 1.4;
 function preSnap(g){
-  if (!g || g.phase !== "huddle") return {stage: g && g.phase === "cadence" ? "set" : "none", u: 1};
-  const L = g.huddleLen, e = L - g.t, tA = Math.max(2.5, L - 4.6), tB = tA + 2.4;
-  if (e < tA) return {stage: "huddle", u: e/tA, tA};
-  if (e < tB) return {stage: "lineup", u: (e - tA)/2.4, tA};
-  return {stage: "survey", u: clamp((e - tB)/2.2, 0, 1), tA};
+  if (!g || g.phase !== "huddle" || !g.pre) return {stage: g && g.phase === "cadence" ? "set" : "none", u: 1};
+  const P = g.pre;
+  if (P.stage === "huddle") return {stage: "huddle", u: 0};
+  if (P.stage === "lineup") return {stage: "lineup", u: clamp(P.t/LINEUP, 0, 1)};
+  return {stage: "survey", u: clamp(P.t/SURVEY, 0, 1)};
 }
 // the other ten: five linemen, the QB, a tight end, and three receivers. Huddle spots go around a circle with
 // the QB at the top facing you and you at the bottom; formation spots depend on the play.
@@ -1768,7 +1783,7 @@ function makeOffense(){
 function updateOffense(dt){
   const g = game; if (!g || !g.offense) return;
   const ps = preSnap(g);
-  if (g.phase === "huddle" && ps.stage !== "huddle" && !g.broke){ g.broke = true; sfx.breakClap(); }
+  if (g.phase === "huddle" && ps.stage !== "huddle" && !g.broke) g.broke = true;
   for (const o of g.offense){
     if (ps.stage === "huddle"){ o.x = o.h.x; o.z = o.h.z; o.face = Math.atan2(HUDDLE.x - o.x, -(HUDDLE.z - o.z)); o.run = 0; }
     else if (ps.stage === "lineup"){ const k = ease(ps.u); o.x = lerp(o.h.x, o.f.x, k); o.z = lerp(o.h.z, o.f.z, k); o.face = null; }
@@ -2438,19 +2453,42 @@ function update(dt){
   if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
   crowdFollow(); announcerTick(); if (AC) bandDuck(); updateOffense(dt);
   if (g.phase === "huddle"){
-    const was = g.huddleLen - g.t; g.t -= dt;
-    if (was < 3 && g.huddleLen - g.t >= 3){
-      if (g.down >= 3 && g.huddleLen >= 8) sfx.chant();
-      else if (g.down >= 3 || Math.random() < 0.3) sfx.drumline();
-      else if (g.huddleLen >= 8 && Math.random() < 0.35) band("riff");
-    }
+    // huddle (the call), break, line up, read the defense (the QB IDs the front), then the cadence.
+    // Each step lasts as long as its words, so the rest between plays stays short.
+    const P = g.pre; P.t += dt;
     if (g.down >= 3 && Math.random() < dt*1.5) clap(0, 0.04);   // scattered clapping building for the big down
-    // the snap count waits (up to 3 s) for the booth to finish its line
-    if (g.t <= 0 && boothTalking() && (g.holdT = (g.holdT || 0) + dt) < 3) g.t = 0.01;
-    if (g.t <= 0){ g.phase = "cadence"; g.t = 1.6; g.holdT = 0; $("playCard").hidden = true; say("Down. Set. Hut!", true); banner("Down... set...", "", 1.2); }
+    if (P.stage === "huddle"){
+      if ((P.t > 1.0 && !voiceBusy()) || P.t > (P.max || 7)){
+        P.stage = "lineup"; P.t = 0; $("playCard").hidden = true; sfx.breakClap();
+        if (g.down >= 3) sfx.chant(); else if (Math.random() < 0.25) sfx.drumline();
+        // sometimes the booth gets a quick one in while the offense lines up
+        announce(g.down >= 3 && g.toGo >= 5 ? "third" : "huddle", {chance: g.down >= 3 ? 0.4 : 0.2});
+      }
+    } else if (P.stage === "lineup"){
+      if (P.t >= LINEUP){
+        P.stage = "survey"; P.t = 0;
+        const fc = FRONT_CALL[g.front] || (g.playType === "run" && Math.random() < 0.35 ? null : undefined);
+        if (fc){ say(fc[0], true); banner(fc[0].split("!")[0] + "!", fc[1], 1.4); }
+        else if (fc === null){ const mike = g.defenders.find(d => d.type === "LB" && Math.abs(d.x) < 2); if (mike) say(`Mike ${mike.num}!`, true); }
+      }
+    } else if (P.t >= SURVEY && (!voiceBusy() || P.t > SURVEY + 2.5)){
+      // the cadence: "Down! Set! Blue 42!" then the hut, or two huts on a hard count
+      g.phase = "cadence"; g.cad = {t: 0, huts: g.count, done: 0, next: null};
+      say(`Down! Set! ${CADENCE_WORDS[Math.floor(Math.random()*4)]} ${CADENCE_NUMS[Math.floor(Math.random()*4)]}!`, true);
+      banner("Down... set...", g.count === 2 ? "On two" : "", 1.6);
+    }
+    // a rough countdown to the snap, for anything that wants to know how long the huddle has left
+    g.t = P.stage === "huddle" ? LINEUP + SURVEY + 1 : P.stage === "lineup" ? LINEUP - P.t + SURVEY : Math.max(0, SURVEY - P.t);
   } else if (g.phase === "cadence"){
-    g.t -= dt;
-    if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
+    const C = g.cad; C.t += dt;
+    if (C.next == null){ if ((C.t > 0.6 && !voiceBusy()) || C.t > 3.5) C.next = C.t + 0.15; }
+    else if (C.t >= C.next){
+      sfx.hut(); C.done++;
+      if (C.done < C.huts) C.next = C.t + 0.5;
+      else C.snap = true;
+    }
+    g.t = C.snap ? 0 : 1;
+    if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
       g.blockers = g.playType === "run" ? makeBlockers() : null; g.pile = null; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
