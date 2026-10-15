@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16, earned piles, speed breaks tackles</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, run lanes and stiff arm cue</p>
   </div>
 </div>
 
@@ -2107,11 +2107,14 @@ function updateBlockers(dt, t){
   }
 }
 // runs: the most open lane for this play (bang inside, bend back, bounce outside), for a green arrow at the mesh
-function openLane(){
-  const g = game, s = g.play.hole >= 0 ? 1 : -1, sch = g.play.scheme;
-  const lanes = sch === "toss" ? [{x: s*7.5, k: "edge"}, {x: s*4.5, k: "cut up"}] : sch === "power" ? [{x: s*3.6, k: "follow"}, {x: s*6, k: "bounce"}] :
-    sch === "dive" ? [{x: -1, k: "left"}, {x: 1, k: "right"}] : sch === "ozone" ? [{x: s*5.5, k: "press"}, {x: s*8.5, k: "bounce"}, {x: s*2.2, k: "cut back"}] :
+function playLanes(play){
+  const s = play.hole >= 0 ? 1 : -1, sch = play.scheme;
+  return sch === "toss" ? [{x: s*7.5, k: "edge"}, {x: s*4.5, k: "cut up"}] : sch === "power" ? [{x: s*3.6, k: "follow"}, {x: s*6, k: "bounce"}] :
+    sch === "dive" ? [{x: -1, k: "left"}, {x: 1, k: "right"}] : sch === "ozone" ? [{x: s*4.6, k: "press"}, {x: s*8.5, k: "bounce"}, {x: s*2.2, k: "cut back"}] :
     [{x: s*1.2, k: "bang"}, {x: -s*1.6, k: "bend"}, {x: s*6.2, k: "bounce"}];
+}
+function openLane(){
+  const g = game, lanes = playLanes(g.play);
   let best = null;
   for (const L of lanes){
     let room = 9;
@@ -2275,6 +2278,9 @@ function resolveContact(d, t, tc = t){
   else if (Math.abs(dx) > 0.6 || nz < 0.3) hold *= 0.7;    // an arm tackle from the side or behind
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
   if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
+  // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
+  const noMove = !truck && !stiff && sinceJuke > 1.2;
+  if (noMove && !hot && !dive && Math.abs(dx) < 0.7 && nz > 0.6) hold = Math.max(hold, 0.8);
   hold = Math.max(hold, 0.25);                             // nobody is untackleable...
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
@@ -2354,21 +2360,29 @@ function updateLive(dt, t){
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.78; sfx.whoosh();   // a real cut: about a step and a half, and it costs speed
+    // rails: before the line, a cut moves you to the next lane over that way (bang, bend, bounce); you follow it on your own
+    if (p.z < 0 && !g.caught && g.rail != null){
+      const next = playLanes(g.play).map(l => l.x).filter(x => input.juke*(x - g.rail) > 0.5).sort((a, b) => Math.abs(a - g.rail) - Math.abs(b - g.rail))[0];
+      g.rail = next ?? g.rail + input.juke*1.6;
+    }
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
   if (mode === "body" && BodyCore.state.stance > 0.55){ input.shoulder = true; input.shoulderT = t; }
   if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.lowerZ = p.z + 2.5; p.dip = 1; }
   if (t - p.lastShoulder < 1.5 && p.z <= (p.lowerZ ?? -99)) p.dip = Math.max(p.dip, 0.8);
-  // steering: a held lean drifts you that way, for bend and bounce reads
-  if (mode === "body" && !g.pp){ const L = BodyCore.state.lean, k = clamp((Math.abs(L) - 0.35)/0.65, 0, 1); if (k > 0) p.x += Math.sign(L)*k*4*dt; }
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
   input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; input.stiffSide = 0;
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
-  // drift toward the called hole before the line, like following your blockers
-  const steering = mode === "body" && Math.abs(BodyCore.state.lean) > 0.35;
-  if (p.z < 0 && !g.caught && !steering && t - p.lastJuke > 0.4) p.x += clamp(g.play.hole - p.x, -1, 1)*dt*3.2;
+  // rails: before the line you follow your lane on your own, like following your blockers
+  if (g.rail == null) g.rail = g.play.hole;
+  if (p.z < 0 && !g.caught && t - p.lastJuke > 0.25) p.x += clamp(g.rail - p.x, -1, 1)*dt*3.6;
+  // the stiff arm cue: a tackler closing from the side turns your head toward him
+  const threat = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact" && !d.block && g.t <= -d.delay && d.z - p.z > 0.2 && d.z - p.z < 4 && Math.abs(d.x - p.x) > 0.5 && Math.abs(d.x - p.x) < 4.5)
+    .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];
+  if (threat && !g.pile){ g.glanceSide = Math.sign(threat.x - p.x); g.glance = Math.min(1, (g.glance || 0) + dt*5); }
+  else g.glance = Math.max(0, (g.glance || 0) - dt*3);
   const prevZ = p.z;
   p.z += p.speed*dt;
   p.xHist.push({t, x: p.x, z: p.z}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
@@ -2760,7 +2774,7 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
@@ -2790,7 +2804,8 @@ function camState(in3D){
   const bob = Math.sin(p.bob)*0.07*Math.min(1, p.speed/4);
   const dip = (p.dip || 0)*0.55;
   const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
-  const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip, F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: 0};
+  const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
+  const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip, F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
   return in3D && g && g.offense ? preSnapCam(g, c) : c;
 }
 // yaw turns your head (+ is right); the 3D camera turns the same way, so 2D overlays stay on the 3D world
@@ -2947,6 +2962,14 @@ function drawPlayers(c, t){
 }
 function drawCues(c, t, world2D){
   const g = game; if (!g) return;
+  // the stiff arm cue: that edge of the screen flashes red with a hand while a tackler closes from the side
+  if (g.phase === "live" && g.glance > 0.05 && g.playType === "run"){
+    const sd = g.glanceSide, a = g.glance*(0.5 + 0.2*Math.sin(t*14)), w = Math.max(70, W*0.18), x0 = sd > 0 ? W : 0;
+    const gr = cx.createLinearGradient(x0, 0, x0 - sd*w, 0); gr.addColorStop(0, `rgba(230,40,40,${a})`); gr.addColorStop(1, "rgba(230,40,40,0)");
+    cx.fillStyle = gr; cx.fillRect(sd > 0 ? W - w : 0, 0, w, H);
+    cx.globalAlpha = Math.min(1, g.glance*1.4); cx.font = `${Math.round(Math.min(W, H)*0.13)}px system-ui, sans-serif`; cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.fillText("✋", sd > 0 ? W - w*0.45 : w*0.45, H*0.5); cx.globalAlpha = 1;
+  }
   // the read: a green arrow on the open lane while you're still behind the line
   if (g.phase === "live" && g.lane && g.p.z < 0.5){
     const a = proj(c, g.lane.x, 0.05, 1.8), b = proj(c, g.lane.x, 0.05, 4.2);
