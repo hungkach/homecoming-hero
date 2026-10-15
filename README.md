@@ -14,9 +14,8 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Steer | Hold a lean: you drift that way (bend or bounce a zone run) | |
 | Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards | Swipe down |
 | Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out | Swipe up |
-| Pass pro: shuffle | Bound toward the blitzer (and back) | Swipe toward him |
-| Pass pro: stance | Hold a quarter squat | Hold a thumb down |
-| Pass pro: block | Both arms out to the sides together | Tap |
+| Pass pro: set and anchor | Quarter squat before the blitzer gets there, then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |
+| Pass pro: punch (bonus) | Both arms out to the sides as he hits: he's stunned, the hold is shorter, the pocket is cleaner | Tap |
 | Route: run it | High knees | Tap fast |
 | Route: break | Bound toward the break when it beeps at the cone | Swipe toward the break |
 | Route: catch | Jump (or both arms up) as the ring closes | Swipe up |
@@ -27,7 +26,7 @@ Run blocking is a real scheme for every play: zone steps playside together and c
 
 Play calls follow the situation: power and the dive in short yardage and at the goal line, tosses on long yardage, pass pro or a route on 3rd and long, more passing when trailing late, and never the same play twice in a row. On 4th down the coach goes for it on 4th and inches, on short yardage in Raiders territory, or when trailing late; otherwise it's a field goal (50 yards or less) or a punt, and field position changes the Raiders' odds. The Raiders' front follows the situation too: goal line (packed in, no one deep), nickel on 3rd and long (light box), cover 2 on 2nd and long, and the occasional run blitz. The play call tells you what they're in.
 
-Pass pro read: before the snap, the real blitzer creeps closer and sinks lower. The other one bounces in place, then drops into coverage.
+Pass pro is a wall sit: be set before he arrives, then hold through the bull rush while the bar fills. Hold 80 percent of it for a clean pocket, half for a hurried throw; stand up early and it's a sack. Before the snap, the real blitzer creeps closer and sinks lower; the other one bounces in place, then drops into coverage.
 
 Routes: the route is drawn on the grass before the snap, with an orange cone at the break. A linebacker covers you. Break on time and he bites, which opens space for the catch. The ball's whoosh rises to its peak right as it arrives, so you can time your hands by ear. After the catch it's a normal run.
 

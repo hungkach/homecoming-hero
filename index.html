@@ -140,7 +140,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, run blocking and pile pushes</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, pass pro squat hold</p>
   </div>
 </div>
 
@@ -1622,7 +1622,7 @@ function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
   const steps = g.playType === "route"
     ? [["🏃", touch ? "Tap fast to the cone" : "High knees to the cone"], [arrow, touch ? "Swipe to break" : "Bound to break"], ["🙌", touch ? "Swipe up to catch" : "Jump to catch"]]
-    : [["↔️", touch ? "Swipe toward the blitzer" : "Bound toward the blitzer"], ["⬇️", touch ? "Hold a thumb down" : "Sit in a quarter squat"], ["👐", touch ? "Tap to punch" : "Both arms out to block"]];
+    : [["⬇️", touch ? "Hold a thumb down before he gets there" : "Quarter squat before he gets there"], ["⏱️", touch ? "Keep holding" : "Hold the squat"], ["👐", touch ? "Tap as he hits (bonus)" : "Both arms out as he hits (bonus)"]];
   $("pcTag").textContent = `${ord(g.down)} and ${g.toGo >= g.ballOn ? "goal" : g.toGo}`;
   $("pcName").textContent = g.play.name;
   $("pcSteps").innerHTML = steps.map(([icon, text], i) => `<li style="animation-delay:${0.35 + i*0.25}s"><b>${i + 1}</b><i>${icon}</i>${text}</li>`).join("");
@@ -2282,26 +2282,26 @@ function passPreSnap(dt){
 function passStance(){
   return mode === "body" ? (BodyCore.state.stance >= 0.25 && BodyCore.state.stance <= 1.3) : (touchStanceHeld() || input.keyStance);
 }
+// Pass pro is a squat hold: sink into a quarter squat before he gets there (you step into his lane on your own),
+// then hold it while he bull-rushes. Holding 80 percent of the anchor is a clean pocket, half is a hurried throw,
+// less is a sack. Both arms out (or a tap) as he hits is a bonus: he's stunned, the anchor is shorter, and the
+// pocket is cleaner. The calls wait out the camera delay.
+const ANCHOR = 2.4;
 function updatePass(dt, t){
   const g = game, p = g.p, pp = g.pp, r = pp.rusher, f = pp.fake, L = LAT(), d = (g.q - 1)/3;
   g.stats.work += dt; pp.liveT += dt;
   pp.stanceNow = passStance();
   p.dip += ((pp.stanceNow ? 0.6 : 0) - p.dip)*Math.min(1, dt*10);
-  // shuffle and punch
-  if (input.juke && t - p.lastJuke > 0.3){
-    const engaged = r.state === "engaged";
-    p.jukeFrom = p.x; p.jukeTo = clamp(p.x + input.juke*(engaged ? 0.6 : 1.2), -2.4, 2.4); p.jukeT = 0; p.lastJuke = input.jukeT ?? t; sfx.step();
-    if (pp.counterAt != null && !pp.mirrored && input.juke === pp.counterSide && p.lastJuke >= pp.counterAt - 0.1 && p.lastJuke <= pp.counterAt + 0.8) pp.mirrored = true;
-  }
   if (input.punch){ pp.punchT = input.punchT ?? t; p.stiffAnim = 1; }
   input.juke = 0; input.punch = false; input.jukeT = input.punchT = null;
-  if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1 - u)*(1 - u)); }
   p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
+  // you slide over to meet him
+  p.x += clamp(pp.lane - p.x, -1, 1)*Math.min(1, dt*4);
   // the fake takes a hesitation step, then drops into coverage with everyone else
   f.crouch = 0; f.anim += dt*8;
   if (pp.liveT < 0.35) f.z -= 3*dt; else f.z += 5*dt;
   for (const o of g.defenders) if (o.type !== "BLITZ" && o.type !== "FAKE" && pp.liveT < 1.6){ o.z += 3*dt; o.anim += dt*8; }
-  // the blitzer runs the A gap, then straight at the spot behind you
+  // the blitzer runs the A gap, then straight at you
   if (r.state === "creep") r.state = "rush";
   if (r.state === "rush"){
     const sp = 6.2 + d*0.6, gap = {x: pp.side*1.0, z: -0.6}, spot = {x: pp.lane, z: p.z + 0.9};
@@ -2312,34 +2312,28 @@ function updatePass(dt, t){
     pp.eta = (dist - step + rest)/sp;
     if (r.z <= p.z + 0.95){ r.state = "contact"; pp.contactAt = t; }
   }
-  // the call waits out the camera delay, so a shuffle or punch seen late on screen still counts
-  if (r.state === "contact" && t >= pp.contactAt + L + 0.15){
-    if (Math.abs(p.x - pp.lane) >= 0.8){
-      r.state = "free"; sfx.hit(); g.shake = 0.6;
-      return endPass("sack", Math.sign(p.x) === -pp.side ? "You picked up the wrong man." : "He beat you to the spot.");
-    }
+  // contact: you need to be set (in your stance) by the time he gets there, give or take a beat
+  if (r.state === "contact"){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt; r.z = p.z + 0.85; }   // the anchor starts at the hit
+  if (r.state === "contact" && t >= pp.contactAt + L + 0.4){
+    const set = pp.setAt != null && pp.setAt <= pp.contactAt + 0.4;
+    if (!set){ r.state = "free"; sfx.hit(); g.shake = 0.6; return endPass("sack", "You weren't set. Sink into your stance before he gets there."); }
     g.stats.pickups++;
-    pp.punchGood = pp.punchT >= pp.contactAt - 0.35 && pp.punchT <= pp.contactAt + 0.15;
+    pp.punchGood = pp.punchT >= pp.contactAt - 0.4 && pp.punchT <= pp.contactAt + 0.3;
+    pp.anchor = pp.punchGood ? ANCHOR*0.8 : ANCHOR;
     r.state = "engaged"; sfx.pads(); g.shake = 0.4;
-    banner(pp.punchGood ? "Stonewalled!" : "Late hands", pp.punchGood ? "Now anchor." : "He got into your chest.", 1);
-    pp.counterAt = pp.contactAt + 0.7; pp.counterSide = Math.random() < 0.5 ? -1 : 1;
+    banner(pp.punchGood ? "Stonewalled!" : "Picked him up!", "Now hold that squat!", 1);
   }
+  // when you first got into your stance (as seen on screen, so camera delay doesn't cost you)
+  if (pp.setAt == null && pp.stanceNow) pp.setAt = t - L;
   if (r.state === "engaged"){
     const seenT = t - L;
-    if (seenT >= pp.contactAt && seenT <= pp.contactAt + 2.0 && pp.stanceNow) pp.stanceTime += dt;
-    if (t >= pp.counterAt && !pp.counterCued){ pp.counterCued = true; sfx.counter(pp.counterSide); }
-    const lean = clamp((t - pp.counterAt)/0.3, 0, 1);
-    r.z = p.z + 0.85; r.x = pp.mirrored ? p.x : pp.lane + pp.counterSide*0.5*lean;
-    if (!pp.mirrored && t >= pp.counterAt + 0.8 + L){
-      r.state = "free"; sfx.whoosh();
-      return endPass(pp.punchGood ? "hurried" : "sack", "He spun off your block.");
-    }
-    if (t >= pp.contactAt + 2.0 + L){
-      const held = pp.stanceTime;
-      let res;
-      if (pp.punchGood && held >= 1.6 && pp.mirrored) res = "clean";
-      else if (pp.punchGood || held >= 1.0) res = "hurried";
-      else res = "sack";
+    if (seenT >= pp.contactAt && seenT <= pp.contactAt + pp.anchor){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt; }
+    // the bull rush: he drives you back while you're out of your stance
+    r.z = p.z + 0.85; r.x = p.x + Math.sin(t*9)*0.08;
+    if (!pp.stanceNow) p.z -= 0.8*dt;
+    if (t >= pp.contactAt + pp.anchor + L){
+      const frac = pp.stanceTime/pp.anchor;
+      const res = frac >= 0.8 ? "clean" : frac >= 0.5 ? "hurried" : "sack";
       return endPass(res, res === "sack" ? "You came out of your stance." : "");
     }
   }
@@ -2349,7 +2343,7 @@ function endPass(result, why){
   g.phase = "dead"; g.t = 3.0; sfx.whistle();
   g.stats.passPro++;
   let kind = null, gain = 0;
-  if (result === "clean"){ g.stats.clean++; gain = Math.round(rand(12, 30)); }
+  if (result === "clean"){ g.stats.clean++; gain = Math.round(g.pp && g.pp.punchGood ? rand(16, 34) : rand(10, 24)); }
   else if (result === "hurried"){ if (Math.random() < 0.5) gain = Math.round(rand(3, 8)); else kind = "incomplete"; }
   else { g.stats.sacks++; gain = -Math.min(Math.round(rand(5, 9)), 99 - g.ballOn); kind = "sack"; }
   if (!kind) kind = gain >= g.ballOn ? "td" : "pass";
@@ -2691,6 +2685,13 @@ function drawPassSelf(c, t){
     cx.fillStyle = "rgba(10,16,32,.75)"; cx.fillRect(x - 4, top - 4, 28, h + 8);
     cx.fillStyle = "rgba(90,220,120,.35)"; cx.fillRect(x, top + h*(1 - 1.1/1.3), 20, h*(0.85/1.3));
     cx.fillStyle = pp.stanceNow ? "rgba(90,220,120,.95)" : "rgba(255,207,63,.9)"; cx.fillRect(x, top + h*(1 - lvl), 20, h*lvl);
+    // the anchor: a big bar across the bottom fills while you hold, gold to green as you pass the clean-pocket mark
+    if (pp.rusher.state === "engaged" && pp.anchor){
+      const u = clamp((pp.held || 0)/pp.anchor, 0, 1), k = clamp(pp.stanceTime/pp.anchor, 0, 1), bw = Math.min(W*0.6, 420), bx = W/2 - bw/2, by = H*0.72;
+      cx.fillStyle = "rgba(10,16,32,.75)"; cx.fillRect(bx - 4, by - 4, bw + 8, 30);
+      cx.fillStyle = k >= 0.8 ? "rgba(90,220,120,.95)" : "rgba(255,207,63,.95)"; cx.fillRect(bx, by, bw*k, 22);
+      cx.fillStyle = "rgba(255,255,255,.35)"; cx.fillRect(bx + bw*u, by, 3, 22); cx.fillRect(bx + bw*0.8, by - 4, 2, 30);
+    }
   }
 }
 // route: the path on the grass before the snap, the cone, and a ring that closes as the ball arrives
