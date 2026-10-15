@@ -1,8 +1,9 @@
 // Forces route plays with a touch autopilot. Usage: node tests/route_test.js index.html [good|nobreak|wrongway|nohands|lazy]
+// PLAY=screen (or motion, seam, slant...) forces route plays whose name contains it.
 // good: sprints, breaks the called way at the cone, hands out as the ball arrives, then runs after the catch.
 const fs = require("fs"), path = require("path"), vm = require("vm");
 let src = fs.readFileSync(path.join(__dirname, "full_game.js"), "utf8");
-src = src.replace('await els.touchBtn._l.click();', 'globalThis.__hhForceRoute = true; await els.touchBtn._l.click();');
+src = src.replace('await els.touchBtn._l.click();', 'globalThis.__hhForceRoute = process.env.PLAY || true; await els.touchBtn._l.click();');
 // the run autopilot keeps tapping and juking after the catch; this adds the route itself
 src = src.replace('if (g.phase === "live" && g.playType !== "pass"){', `if (g.phase === "live" && g.playType === "route"){
       const rt = g.rt;

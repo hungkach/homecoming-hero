@@ -17,7 +17,7 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Pass pro: set and anchor | Quarter squat before the blitzer gets there, then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |
 | Pass pro: punch (bonus) | Both arms out to the sides as he hits: he's stunned, the hold is shorter, the pocket is cleaner | Tap |
 | Route: run it | High knees | Tap fast |
-| Route: break | Bound toward the break when it beeps at the cone | Swipe toward the break |
+| Route: break | Lean (or bound) toward the break when it beeps at the cone | Swipe toward the break |
 | Route: catch | Jump (or both arms up) as the ring closes | Swipe up |
 
 Before every snap: in the huddle the QB gives the official call ("Ace right, 24 zone, on one. Ready, break!") while a big card shows the call, the play in plain words, and the three things to do; the huddle breaks with a clap and the card clears; the offense jogs to the line while you walk up; you scan the defense left and right while the QB identifies the front ("Nickel! Nickel!", "Mike's hot!", "Mike 52!"); then a real cadence ("Down! Set! Blue 42!" and the hut, or two huts on a hard count). Each step lasts as long as its words, so the rest between plays stays short. The booth jokes mostly after plays, and now and then while the offense lines up. Nobody talks over anybody: important calls wait their turn and small ones are skipped. (The 3D view shows the huddle and lineup; the timing is the same in 2D.)
@@ -29,6 +29,11 @@ Play calls follow the situation: power and the dive in short yardage and at the 
 Pass pro is a wall sit: be set before he arrives, then hold through the bull rush while the bar fills. Hold 80 percent of it for a clean pocket, half for a hurried throw; stand up early and it's a sack. Before the snap, the real blitzer creeps closer and sinks lower; the other one bounces in place, then drops into coverage.
 
 Routes: the route is drawn on the grass before the snap, with an orange cone at the break. A linebacker covers you. Break on time and he bites, which opens space for the catch. The ball's whoosh rises to its peak right as it arrives, so you can time your hands by ear. After the catch it's a normal run.
+
+More ways to get the ball in space:
+- Outside zone (18 and 19 stretch): everyone reaches toward the sideline; press the edge, then cut up behind the block that wins, or bounce it outside.
+- Halfback screen: sell the block for a beat while the rush runs past you, drift to the flat, catch the short throw, then follow the linemen who release in front of you. It shows up on early downs too.
+- Halfback motion: before the snap you jog out to the slot (a few seconds of rest), then run a slant, an out, or the seam against the defender over you. The seam has no break: keep running and the ball comes over your shoulder.
 
 ## Workout length
 

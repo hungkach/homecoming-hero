@@ -28,7 +28,7 @@ node tests/core_test.js index.html 1.5 0       # synthetic body through the core
 node tests/camera_test.js index.html           # living room fallback chain and auto-pick
 node tests/full_game.js index.html good        # full touch game with an autopilot (also: lazy); CADENCE=3.2 taps per second (default 4.6), MINUTES=20 game length (default 6), SCHEMES=1 prints yards by run scheme
 node tests/pass_test.js index.html good        # forced pass plays (also: nopunch, nostance, quit, lazy)
-node tests/route_test.js index.html good       # forced route plays (also: nobreak, wrongway, nohands, lazy)
+node tests/route_test.js index.html good       # forced route plays (also: nobreak, wrongway, nohands, lazy); PLAY=screen or motion forces plays whose name contains it
 node tests/speech_test.js index.html good      # simulated speech queue: play calls must never cut off the announcer (BOOTH=family, SHOW=1)
 node tests/startup_test.js index.html living_room 2.3 0.3   # setup, warm-up, latency, play; add "pass" or "route"; MISS=duck,jump skips moves to test the third round
 ```
@@ -37,7 +37,7 @@ These are simulations. They prove the logic, not how real tracking feels. Thresh
 
 ## Status
 
-Done: body core v0.4 (arm raise, duck, jump, lateral bound and back, lean with steering), six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection (a squat hold) and route running on 3rd and long, 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd (breakaway roar, 3rd and 4th down build) and marching band (the Mustang March), best-voice picker, Studio voices (Kokoro in a worker, opt-in, lines cached on the device; untested on a real device because the model host is blocked in cloud sessions), situational play calls and defensive fronts, run blocking schemes (zone, power with a puller, toss, dive) with engagements and sheds, a green read arrow, and pile pushes, 4th down punts and field goals, workout length (15 to 30 minutes; the game clock follows real time), announcer booth (after dark by default, family, or off; it gets the gaps between calls and the snap count waits for it), iOS playback audio session.
+Done: body core v0.4 (arm raise, duck, jump, lateral bound and back, lean with steering), six viewing modes with auto-pick, startup sequence (framing check, move test, latency check), pass protection (a squat hold) and route running on 3rd and long, halfback screens (a convoy of releasing linemen) and halfback motion to the slot (slant, out, seam), 3D stadium (three.js, 2D fallback with `?2d`), synthesized crowd (breakaway roar, 3rd and 4th down build) and marching band (the Mustang March), best-voice picker, Studio voices (Kokoro in a worker, opt-in, lines cached on the device; untested on a real device because the model host is blocked in cloud sessions), situational play calls and defensive fronts, run blocking schemes (zone, outside zone, power with a puller, toss, dive) with engagements and sheds, a green read arrow, and pile pushes, 4th down punts and field goals, workout length (15 to 30 minutes; the game clock follows real time), announcer booth (after dark by default, family, or off; it gets the gaps between calls and the snap count waits for it), iOS playback audio session.
 
 The 3D view and the crowd can't be checked by the Node tests. Check them in Chromium with Playwright (pre-installed in cloud sessions), serving three.js from npm because the CDN may be blocked there.
 
