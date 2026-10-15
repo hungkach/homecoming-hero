@@ -40,7 +40,7 @@ function frame(P, off){
 const ease = u => u < 0 ? 0 : u > 1 ? 1 : u*u*(3 - 2*u);
 function thigh(P, side, deg){ const h = P[side + "Hip"], a = deg*Math.PI/180;
   P[side + "Kn"] = [h[0], h[1] + 0.45*Math.cos(a), h[2] - 0.45*Math.sin(a)]; P[side + "An"] = [h[0], P[side + "Kn"][1] + 0.43, P[side + "Kn"][2]]; }
-function knees(P, t){ const ph = t*2.3*Math.PI*2; thigh(P, "l", Math.max(0, Math.sin(ph))*80); thigh(P, "r", Math.max(0, -Math.sin(ph))*80); }
+function knees(P, t, deg = 80){ const ph = t*2.3*Math.PI*2; thigh(P, "l", Math.max(0, Math.sin(ph))*deg); thigh(P, "r", Math.max(0, -Math.sin(ph))*deg); }
 function punchL(P, k){ P.lEl = [0.2 - 0.03*k, -0.3 - 0.17*k, -0.15 - 0.16*k]; P.lWr = [0.15, -0.45, -0.28 - 0.34*k]; }
 function punch(P, k){ P.rEl = [-0.2 + 0.03*k, -0.3 - 0.17*k, -0.15 - 0.16*k]; P.rWr = [-0.15, -0.45, -0.28 - 0.34*k]; }
 function guard(P){ P.lEl = [0.2, -0.3, -0.15]; P.lWr = [0.15, -0.45, -0.28]; punch(P, 0); }
@@ -74,6 +74,7 @@ function director(t){
       const skip = (process.env.MISS || "").split(",").includes(id) && S.cur.round <= 2;
       if (skip) {}
       else if (id === "knees" && u > 0) knees(P, u);
+      else if (id === "jog" && u > 0) knees(P, u, 50);
       else if (id === "hopL") off.x = offX + 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // bound left (person's +x) and back
       else if (id === "squat" && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
       else if (id === "duck") duck(P, armPulse(u));

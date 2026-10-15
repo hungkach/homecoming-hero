@@ -119,6 +119,7 @@ console.log("   overhead state:", BodyCore.state.overhead);
 const march = deg => u => { const P = standing(), ph = u*2.3*Math.PI*2; thigh(P, "l", Math.max(0, Math.sin(ph))*deg); thigh(P, "r", Math.max(0, -Math.sin(ph))*deg); return {P, off: {x:0, y:0}}; };
 results.lowBefore = section("low knees, default thresholds", 3, march(48));
 BodyCore.captureStart("stand", 0); run(1, stand); BodyCore.captureStop();
+BodyCore.captureStart(["step"], "jog1"); run(2.6, march(50)); BodyCore.captureStop();   // the warm-up's easy jog
 BodyCore.captureStart(["step"], 1); run(3, march(80)); BodyCore.captureStop();
 BodyCore.applyMoveTest(); run(0.5, stand);
 let s0 = log.length; results.highAfter = section("high knees after warm-up", 3, march(80)); const hHigh = log.slice(s0).filter(e => e.type === "step" && e.h != null).map(e => e.h);
@@ -151,7 +152,7 @@ const checks = [
   ["arm raises don't punch", !Object.keys({...results.raiseL, ...results.raiseR, ...results.raiseB}).some(k => k.startsWith("punch"))],
   ["duck fires once, no jump", n(results.duck, "duck") === 1 && !n(results.duck, "jump")],
   ["jump fires once, no hop or duck", n(results.jump, "jump") === 1 && !n(results.jump, "hop<") && !n(results.jump, "hop>") && !n(results.jump, "duck")],
-  ["tired knees (48 deg after an 80 deg warm-up) still step (5 or more in 3 s)", n(results.lowAfter, "stepL") + n(results.lowAfter, "stepR") >= 5],
+  ["tired knees (48 deg) still step after a jog-and-high-knees warm-up (10 or more in 3 s)", n(results.lowAfter, "stepL") + n(results.lowAfter, "stepR") >= 10],
   ["tired knees carry a lower knee height than full ones", avg(hLow) > 0 && avg(hLow) < avg(hHigh) - 0.2 && avg(hHigh) > 0.8],
   ["no stray rip or swim", !Object.keys({...results.punchR, ...results.over}).some(k => k.startsWith("rip") || k.startsWith("swim"))],
 ];
