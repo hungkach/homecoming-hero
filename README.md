@@ -11,6 +11,7 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Take the handoff | Start sprinting at the snap; the QB meets you at the mesh (or pitches on a toss) | Tap fast |
 | Sprint | High knees in place. Faster knees run faster, and higher knees add a little more; tired, lower knees still count | Tap fast |
 | Juke or cut | Lean hard to one side (or bound out and straight back). Before the line, a cut jumps you to the next lane that way (bang, bend, bounce); you follow your lane on your own | Swipe sideways |
+| Goal line dive | Inside the 3: jump at the line to go over the top. Leave from the pile, not early; speed carries you farther | Swipe up (it replaces the stiff arm there) |
 | Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards | Swipe down |
 | Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out. When one closes from the side, your view glances at him and that edge flashes red with a hand | Swipe up |
 | Pass pro: set and anchor | Quarter squat before the blitzer gets there, then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |

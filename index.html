@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16, easier high knees</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, goal line dive</p>
   </div>
 </div>
 
@@ -1479,6 +1479,7 @@ function endPointer(e){
   if (dist < 28){ addStep(now()); return; }
   if (Math.abs(dx) > Math.abs(dy)){ input.juke = dx > 0 ? 1 : -1; input.jukeT = now(); }
   else if (dy > 0){ input.shoulder = true; input.shoulderT = now(); }
+  else if (game && game.goalLine){ input.dive = true; input.diveT = now(); }   // at the goal line, swipe up is the dive
   else { input.stiff = true; input.stiffT = now(); }
 }
 cv.addEventListener("pointerup", endPointer);
@@ -1495,7 +1496,7 @@ window.addEventListener("keydown", e => {
   else if (e.code === "ArrowLeft"){ input.juke = -1; input.jukeT = now(); }
   else if (e.code === "ArrowRight"){ input.juke = 1; input.jukeT = now(); }
   else if (e.code === "ArrowDown"){ input.shoulder = true; input.shoulderT = now(); }
-  else if (e.code === "ArrowUp"){ input.stiff = true; input.stiffT = now(); }
+  else if (e.code === "ArrowUp"){ if (game.goalLine){ input.dive = true; input.diveT = now(); } else { input.stiff = true; input.stiffT = now(); } }
   else if (e.code === "Escape") pause();
 });
 window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keyStance = false; });
@@ -1712,6 +1713,7 @@ function pumpBody(){
       } else if (game.playType === "run"){ input.stiff = true; input.stiffT = e.tEff; input.stiffSide = e.side === "R" ? 1 : -1; }   // stiff arm toward that side
     }
     else if ((e.type === "jump" || e.type === "overhead") && game.playType === "route"){ input.punch = true; input.punchT = e.tEff; }   // the catch
+    else if (e.type === "jump" && game.goalLine && game.playType === "run"){ input.dive = true; input.diveT = e.tEff; }   // the goal line dive
   }
 }
 const handPunch = {L: -9, R: -9};
@@ -1802,7 +1804,8 @@ function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
   const side = g.play.hole > 0.5 ? "right" : g.play.hole < -0.5 ? "left" : "up the middle", runArrow = g.play.hole > 0.5 ? "↗️" : g.play.hole < -0.5 ? "↖️" : "⬆️";
   const steps = g.playType === "run"
-    ? [["🏃", touch ? "Tap fast" : "High knees"], [runArrow, g.play.scheme === "toss" ? `Get to the edge, ${side}` : g.play.scheme === "dive" ? "Hit it up the middle" : `Hole is ${side}. Follow the green.`], ["⬇️", touch ? "Swipe down to truck" : "Squat or duck to truck"]]
+    ? [["🏃", touch ? "Tap fast" : "High knees"], [runArrow, g.play.scheme === "toss" ? `Get to the edge, ${side}` : g.play.scheme === "dive" ? "Hit it up the middle" : `Hole is ${side}. Follow the green.`],
+       g.ballOn <= 3 ? ["🦘", touch ? "Swipe up at the line to dive over" : "Jump at the line to dive over"] : ["⬇️", touch ? "Swipe down to truck" : "Squat or duck to truck"]]
     : g.play.screen
     ? [["🧱", touch ? "Wait a beat" : "Sell the block a beat"], [arrow, "Drift to the flat"], ["🙌", touch ? "Swipe up to catch, follow the wall" : "Jump to catch, follow the wall"]]
     : g.play.motion
@@ -2345,10 +2348,30 @@ function updateQB(dt){
   q.anim += dt*8; q.reach = Math.max(0, q.reach - dt*3);
   if (d > 0.1){ const st = Math.min(d, 4*dt); q.x += dx/d*st; q.z += dz/d*st; q.run = 0.8; q.face = Math.atan2(dx, -dz); } else q.run = 0;
 }
+/* the goal line dive: inside the 3, jump at the line (swipe up on touch) and go over the top. You have to be
+   at the pile, not early, and moving: the dive carries about 2.2 yards plus a fifth of your speed. */
+function startDive(t){
+  const g = game, p = g.p, early = p.z < -1.4;
+  const len = 2.2 + 0.2*p.speed, chance = clamp(0.45 + 0.06*p.speed + (early ? -0.25 : 0.2) + (g.front === "goal line" ? -0.1 : 0), 0.15, 0.92);
+  g.dive = {t: 0, from: p.z, len, early, ok: Math.random() < chance}; g.stats.dives = (g.stats.dives || 0) + 1;
+  sfx.whoosh(); crowd(0.4, 1.5);
+}
+function updateDive(dt, t){
+  const g = game, p = g.p, D = g.dive;
+  D.t += dt; const u = clamp(D.t/0.5, 0, 1);
+  const reach = D.ok ? D.len : Math.min(D.len, Math.max(0.3, -D.from + 0.4));   // stopped at the pile, or over it
+  p.z = D.from + reach*ease(u); p.air = Math.sin(Math.PI*u)*0.7; p.speed = 0;
+  if (u < 1) return;
+  p.air = 0; g.dive = null;
+  if (p.z >= g.ballOn){ g.stats.divesIn = (g.stats.divesIn || 0) + 1; banner("Over the top!", "", 1.2); endPlay("td"); }
+  else { sfx.hit(); g.shake = 0.5; endPlay("tackle", D.early ? "Too early. Wait for the pile, then go." : D.ok ? "Dove, but short" : "Stuffed at the pile"); }
+}
 function updateLive(dt, t){
   const g = game, p = g.p;
   g.stats.work += dt;
   if (g.pile){ updatePile(dt, t); return; }
+  if (g.dive){ updateDive(dt, t); return; }
+  if (input.dive){ input.dive = false; if (g.goalLine && !g.caught && p.z > -2.5 && p.speed > 1.5 && t - (input.diveT ?? t) < 0.5){ startDive(t); return; } }
   updateHandoff(dt, t); updateQB(dt);
   if (g.blockers){
     updateBlockers(dt, t);
@@ -2785,7 +2808,7 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s.t < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
@@ -2816,7 +2839,7 @@ function camState(in3D){
   const dip = (p.dip || 0)*0.55;
   const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
   const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
-  const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip, F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
+  const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
   return in3D && g && g.offense ? preSnapCam(g, c) : c;
 }
 // yaw turns your head (+ is right); the 3D camera turns the same way, so 2D overlays stay on the 3D world
