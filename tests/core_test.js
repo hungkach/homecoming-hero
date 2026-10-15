@@ -82,6 +82,7 @@ results.boundL = section("bound left and straight back", 1.6, u => ({P: standing
 results.lean = section("lean right, hips still", 1.5, u => { const P = standing(), d = -0.22*ease(u/0.3);
   for (const k of ["nose","lEar","rEar","lSh","rSh","lEl","rEl","lWr","rWr"]) P[k] = [P[k][0] + d, P[k][1], P[k][2]];
   return {P, off: {x:0, y:0}}; });
+console.log("   steering lean while leaning right:", BodyCore.state.lean.toFixed(2));
 results.calm2 = section("stand", 1, stand);
 results.squat = section("squat and hold", 2, u => { const P = standing(), a = 60*ease(u/0.5), r = a*Math.PI/180;
   thigh(P, "l", a); thigh(P, "r", a); const drop = 0.45*(1 - Math.cos(r));
@@ -125,6 +126,8 @@ const checks = [
   ["bound right and back fires once, to the right", n(results.boundR, "hop>") === 1 && !n(results.boundR, "hop<")],
   ["bound left and back fires once, to the left", n(results.boundL, "hop<") === 1 && !n(results.boundL, "hop>")],
   ["a lean is not a hop", !n(results.lean, "hop<") && !n(results.lean, "hop>")],
+  ["a lean right fires one lean to the right", n(results.lean, "leanR") === 1 && !n(results.lean, "leanL")],
+  ["no lean during high knees, hops, squats, or arm raises", !Object.keys({...results.knees, ...results.hopR, ...results.hopL, ...results.squat, ...results.raiseL, ...results.raiseR, ...results.raiseB, ...results.jump}).some(k => k.startsWith("lean"))],
   ["squat fires one level change", n(results.squat, "level") === 1],
   ["two right stiff arms, no left (fist may leave frame when close and tilted)", n(results.punchR, "punchR") >= (D < 2 && TILT < 0 ? 1 : 2) && !n(results.punchR, "punchL")],
   ["arms overhead fires once" + (D < 2 ? " (skipped: wrists leave frame this close)" : ""), D < 2 || n(results.over, "overhead") === 1],

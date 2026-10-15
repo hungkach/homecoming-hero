@@ -51,11 +51,13 @@ const armPulse = u => u < 0 ? 0 : u < 0.2 ? ease(u/0.2) : u < 0.5 ? 1 : 1 - ease
 function duck(P, k){ for (const j of ["nose","lEar","rEar"]) P[j] = [P[j][0], P[j][1] + 0.22*k, P[j][2] - 0.22*k];
   for (const j of ["lSh","rSh","lEl","rEl","lWr","rWr"]) P[j] = [P[j][0], P[j][1] + 0.14*k, P[j][2] - 0.12*k]; thigh(P, "l", 15*k); thigh(P, "r", 15*k); }
 const jumpUp = u => u > 0 && u < 0.45 ? -0.18*Math.sin(Math.PI*u/0.45) : 0;
+// lean: shoulders and head tip sideways over still hips (person frame +x is the person's left; dir +1 = right)
+function lean(P, dir, k){ const d = -dir*0.2*k; for (const j of ["nose","lEar","rEar","lSh","rSh","lEl","rEl","lWr","rWr"]) P[j] = [P[j][0] + d*(j === "nose" || j.endsWith("Ear") ? 1.2 : 1), P[j][1], P[j][2]]; }
 function overhead(P){ P.lEl = [0.25, -0.82, 0]; P.rEl = [-0.25, -0.82, 0]; P.lWr = [0.25, -1.1, 0]; P.rWr = [-0.25, -1.1, 0]; }
 
 // director: what the simulated player does, based on what the game shows
 const seenSteps = new Set();
-let moveN = 0, armAt = -9, armSide = "r", duckAt = -9;
+let moveN = 0, armAt = -9, armSide = "r", duckAt = -9, leanAt = -9, leanDir = 1;
 let passSeen = false, camH = 0, offX = -0.7, phaseLog = [], lastPhase = "", stepStart = 0, lastStep = -1, hopFrom = 0, hopAt = -9, hopDir = 0, lastJukeAt = -9, playsSeen = 0;
 function director(t){
   const S = HH.setup, P = standing(); let off = {x: offX, y: 0};
@@ -75,6 +77,8 @@ function director(t){
       else if (id === "hopL") off.x = offX + 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // bound left (person's +x) and back
       else if (id === "squat" && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
       else if (id === "duck") duck(P, armPulse(u));
+      else if (id === "leanL") lean(P, -1, armPulse(u));
+      else if (id === "leanR") lean(P, 1, armPulse(u));
       else if (id === "raiseL") raiseArm(P, "l", armPulse(u));
       else if (id === "raiseR") raiseArm(P, "r", armPulse(u));
       else if (id === "raiseB"){ raiseArm(P, "l", armPulse(u)); raiseArm(P, "r", armPulse(u)); }
@@ -120,13 +124,14 @@ function director(t){
       const p = g.p, th = g.defenders.find(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact" && p.z > 0 && d.z > p.z && d.z - p.z < 2.6 && Math.abs(d.x - p.x) < 1.3);
       // rotate through the three moves: juke away, stiff arm toward him, truck
       if (th && t - lastJukeAt > 1.2){ lastJukeAt = t; const k = moveN++ % 3, side = th.x > p.x ? 1 : -1;
-        if (k === 0){ hopAt = t + EXTRA; hopDir = -side; hopFrom = offX; }
+        if (k === 0){ if (moveN % 2){ leanAt = t + EXTRA; leanDir = -side; } else { hopAt = t + EXTRA; hopDir = -side; hopFrom = offX; } }
         else if (k === 1){ armAt = t + EXTRA; armSide = side > 0 ? "r" : "l"; }
         else duckAt = t + EXTRA; }
     }
     if (g.phase === "dead" && g._counted !== true){ g._counted = true; }
     if (t > armAt && t - armAt < 0.8) raiseArm(P, armSide, armPulse(t - armAt));
     if (t > duckAt && t - duckAt < 0.8) duck(P, armPulse(t - duckAt));
+    if (t > leanAt && t - leanAt < 0.8) lean(P, leanDir, armPulse(t - leanAt));
     // hop: person's right is -x; game dir +1 = player's right
     const hu = t - hopAt; if (hu > 0 && hu < 0.25) off.x = hopFrom - hopDir*0.38*ease(hu/0.25); else if (hu >= 0.25 && hu < 1.2) off.x = hopFrom - hopDir*0.38*(1 - ease((hu - 0.25)/0.9)); 
   }
