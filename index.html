@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16, run blocking rebuilt</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, earned piles, speed breaks tackles</p>
   </div>
 </div>
 
@@ -2242,9 +2242,12 @@ function endPlay(kind, extra){
 const MASS = {DL: 1.4, LB: 1.15, COV: 1.15, DB: 0.9};
 const FORM = {DL: 0.9, LB: 0.85, COV: 0.85, DB: 0.78};      // tackle odds for a square, even-momentum hit
 const REACH = 1.0;                                        // how far a defender's arms reach, center to center
+// speed tiers (yards a second): flying (about 5 steps a second) runs through almost anyone; fast (about 3.4)
+// earns a fight for yards when you do go down. Standing around earns nothing.
+const VERY_FAST = 8.6, FAST = 6.5;
 function runnerVel(p, t){ const h = p.xHist, a = h[h.length - 1], b = h.find(e => t - e.t <= 0.15) || a; const dt = a && b ? a.t - b.t : 0; return {x: dt > 0.03 ? (a.x - b.x)/dt : 0, z: p.speed}; }
 function resolveContact(d, t, tc = t){
-  const g = game, p = g.p, m = MASS[d.type] || 1.1;
+  const g = game, p = g.p, m = MASS[d.type] || 1.1, spd = p.speed;
   const who = {type: d.type, cutback: !!d.cutback, front: game.front, assigned: d.assigned || null, blocked: d.wasBlocked ?? null, shed: d.shedAt ?? null, live: -g.t, z: p.z, speed: p.speed, inBlock: !!d.block};   // for the tests
   g.hits = g.hits || []; g.hits.push(who);
   d.state = "resolved";
@@ -2272,7 +2275,8 @@ function resolveContact(d, t, tc = t){
   else if (Math.abs(dx) > 0.6 || nz < 0.3) hold *= 0.7;    // an arm tackle from the side or behind
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
   if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
-  hold = Math.max(hold, 0.25);                             // nobody is untackleable
+  hold = Math.max(hold, 0.25);                             // nobody is untackleable...
+  if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
   if (Math.random() >= hold){
     // broken: he's knocked back along the line of the hit, and it costs you some speed
@@ -2282,15 +2286,15 @@ function resolveContact(d, t, tc = t){
     g.stats.broken++; sfx.pads(); g.shake = truck ? 0.5 : 0.35; crowd(0.3, 1);
     if (truck){ g.stats.trucks++; banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); }
     else if (stiff){ g.stats.stiffs++; banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); }
-    else banner(ratio > 1.5 ? "Ran right through him!" : "Broke the tackle!", "", 1);
+    else banner(spd >= VERY_FAST || ratio > 1.5 ? "Ran right through him!" : "Broke the tackle!", "", 1);
     return;
   }
   // tackled: a fast runner falls forward for extra yards
   p.z += clamp((Pr - m*(defIn + 3.0))*0.3, 0, 2.5);
   d.vx = d.vz = 0;
-  // near the line, it's a pile: fight for yards
+  // fight for yards: only when you went down swinging, lowering the shoulder or at full speed
   g.tackler = who;
-  if (g.playType === "run" && p.z < 6 && p.z < g.ballOn - 1){ if (d.block){ d.block.engaged = false; d.block = null; } startPile(d, t); return; }
+  if (g.playType === "run" && (truck || spd >= FAST) && p.z < g.ballOn - 1){ if (d.block){ d.block.engaged = false; d.block = null; } startPile(d, t); return; }
   sfx.hit(); g.shake = 0.6;
   endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
 }
