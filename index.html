@@ -141,7 +141,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, screens, motion, outside zone</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, sneaky rest and pacing</p>
   </div>
 </div>
 
@@ -1583,7 +1583,7 @@ function newGame(){
   game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, dur: minutes*60, realT: 0, home:0, away:0, down:1, toGo:10, ballOn:75,
     play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
     p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
-    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0},
+    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0, rests:0, eased:0},
     flash:0, shake:0};
   startHuddle(true);
 }
@@ -1606,6 +1606,7 @@ function startHuddle(newDrive){
   g.phase = "huddle"; g.t = g.huddleLen = 6; g.broke = false;
   // 4th down: the coach decides between going for it, a field goal, and a punt
   if (g.down === 4 && !window.__hhForcePass && !window.__hhForceRoute){ const k = fourthDown(); if (k !== "go"){ specialTeams(k); return; } }
+  pacing(g, newDrive);
   const call = callPlay();
   g.playType = call.type; g.play = call.play; g.lastPlay = g.play.name;
   g.front = pickFront();
@@ -1626,10 +1627,30 @@ function startHuddle(newDrive){
   // the QB's call in the huddle: formation, play, and snap count; the huddle lasts as long as the call takes
   g.count = Math.random() < 0.2 ? 2 : 1;
   g.pre = {stage: "huddle", t: 0};
+  // sneaky rest: after a big play, a receiver goes in motion before the snap (your own motion plays already have it)
+  g.shift = g.rest && !g.play.motion ? {key: g.playType === "run" ? "wr2" : "wr3", t: rand(1.8, 2.4), dir: Math.random() < 0.5 ? -1 : 1} : null;
   // the welcome goes first on the opening play, and the call waits for it
   if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0 && boothMode() !== "off" && $("voiceOn").checked){ lastSpoke = now(); speak(pickCall("open"), true); g.pre.max = 16; }
   say(huddleCall(g), true);
   if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
+}
+/* ---------- workout pacing ----------
+   No heart rate monitor, so the game estimates how hard you've been working from recent live seconds.
+   After a big play or a hard stretch, the next play sneaks in a little rest: a receiver goes in motion
+   before the snap and the booth is more likely to get a word in. When run after run gets stuffed, the
+   defense eases off a little (slower reads, a step slower), so a breakaway, the fun part, is in reach again.
+   Nothing gets harder for playing well. */
+const LOAD_HOT = 34;   // a normal rhythm (about 4 live seconds every 14) settles in the high 20s
+function pacing(g, newDrive){
+  const r = g.result && g.result.mine ? g.result : null, gain = r ? r.gain : 0, big = r && (r.kind === "td" || gain >= 15);
+  g.stats.peakLoad = Math.max(g.stats.peakLoad || 0, Math.round(g.load || 0));
+  g.rest = !g.firstPlay && !newDrive && (big || (g.load || 0) > LOAD_HOT);   // a new drive already had the Raiders' possession to rest
+  if (r && !r.counted){
+    r.counted = true; (g.recent ||= []).push(gain); if (g.recent.length > 4) g.recent.shift();
+    const avg = g.recent.reduce((a, x) => a + x, 0)/g.recent.length;
+    if (gain >= 8) g.ease = Math.max(0, (g.ease || 0) - 0.5);
+    else if (g.recent.length >= 3 && avg < 3.5) g.ease = Math.min(1, (g.ease || 0) + 0.25);
+  }
 }
 // 3rd and long gets a big card in the huddle: what the play is and the three moves, in order
 // the official call: "Ace right, 24 zone, on one. Ready, break!"
@@ -1764,6 +1785,10 @@ function spawnDefense(){
     // one linebacker shoots a gap at the snap: nobody blocks him, but if you hit the other gap he's out of the play
     const b = lbs[Math.floor(Math.random()*lbs.length)]; b.blockedUntil = 0; b.delay = 0; b.z = 3; b.speed += 0.6;
   }
+  // rubber band (see pacing): after a run of stuffs, they read a beat later and run a step slower
+  const e = g.ease || 0;
+  if (e > 0) g.stats.eased++;
+  if (e > 0) for (const x of D){ x.speed *= 1 - 0.06*e; if (x.type === "LB") x.delay = (x.delay || 0) + 0.15*e; if (x.blockedUntil) x.blockedUntil += 0.15*e; }
   // goal line: defenders can't line up past the end zone
   for (const x of D) x.z = Math.min(x.z, g.ballOn + 2);
   g.defenders = D;
@@ -1781,6 +1806,7 @@ function preSnap(g){
   if (P.stage === "huddle") return {stage: "huddle", u: 0};
   if (P.stage === "lineup") return {stage: "lineup", u: clamp(P.t/LINEUP, 0, 1)};
   if (P.stage === "motion" || P.stage === "set") return {stage: P.stage, u: 1};
+  if (P.stage === "shift") return {stage: "shift", u: clamp(P.t/g.shift.t, 0, 1)};
   return {stage: "survey", u: clamp(P.t/SURVEY, 0, 1)};
 }
 // the other ten: five linemen, the QB, a tight end, and three receivers. Huddle spots go around a circle with
@@ -1806,6 +1832,11 @@ function updateOffense(dt){
   for (const o of g.offense){
     if (ps.stage === "huddle"){ o.x = o.h.x; o.z = o.h.z; o.face = Math.atan2(HUDDLE.x - o.x, -(HUDDLE.z - o.z)); o.run = 0; }
     else if (ps.stage === "lineup"){ const k = ease(ps.u); o.x = lerp(o.h.x, o.f.x, k); o.z = lerp(o.h.z, o.f.z, k); o.face = null; }
+    else if (g.shift && o.key === g.shift.key && (ps.stage === "shift" || ps.stage === "set" || g.phase === "cadence")){
+      // the motion man jogs across the formation toward the ball and settles a few yards inside
+      const k = ps.stage === "shift" ? ease(ps.u) : 1, to = o.f.x*0.45; o.x = lerp(o.f.x, to, k); o.z = o.f.z; o.face = ps.stage === "shift" && k < 1 ? null : Math.PI;
+      if (k >= 1) o.mx = to;
+    }
     else if (g.phase === "huddle" || g.phase === "cadence"){ o.x = o.f.x; o.z = o.f.z; o.face = Math.PI; }
     else if (g.phase === "live"){
       // receivers run go routes, the tight end blocks, a shotgun QB drops back
@@ -1824,6 +1855,11 @@ function preSnapCam(g, c){
   else if (ps.stage === "survey"){
     const u = ps.u, look = 0.55;
     c.yaw = u < 0.3 ? -look*ease(u/0.3) : u < 0.7 ? lerp(-look, look, ease((u - 0.3)/0.4)) : look*(1 - ease((u - 0.7)/0.3));
+  }
+  else if (ps.stage === "shift" && g.offense){
+    // your eyes follow the man in motion, then come back to the defense
+    const o = g.offense.find(o => o.key === g.shift.key), u = ps.u;
+    if (o){ const want = clamp(Math.atan2(o.x - c.x, Math.max(1, o.z - c.z + 6)), -0.9, 0.9); c.yaw = want*(u < 0.25 ? ease(u/0.25) : u > 0.8 ? 1 - ease((u - 0.8)/0.2) : 1); }
   }
   return c;
 }
@@ -2021,7 +2057,7 @@ function endPlay(kind, extra){
   if (g.phase !== "live") return;
   g.phase = "dead"; g.t = 2.6; sfx.whistle();
   const gain = kind === "td" ? g.ballOn : Math.min(Math.round(p.z), g.ballOn - 1);   // short of the goal line stays short
-  g.result = {kind, gain};
+  g.result = {kind, gain, mine: true};
   if (g.caught){ g.stats.catches++; g.stats.recYards += gain; }
   else { g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain); }
   if (kind === "td"){
@@ -2503,6 +2539,7 @@ function update(dt){
   if (g.phase !== "over"){ g.realT += dt; syncClock(); }
   if (bannerT > 0){ bannerT -= dt; if (bannerT <= 0) $("banner").hidden = true; }
   g.flash = Math.max(0, g.flash - dt); g.shake = Math.max(0, g.shake - dt);
+  g.load = (g.load || 0)*Math.exp(-dt/90) + (g.phase === "live" ? dt : 0);   // recent hard work, in live seconds (fades over a minute and a half)
   if (mode === "body" && g.phase !== "over"){
     if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
@@ -2518,7 +2555,7 @@ function update(dt){
         P.stage = "lineup"; P.t = 0; $("playCard").hidden = true; sfx.breakClap();
         if (g.down >= 3) sfx.chant(); else if (Math.random() < 0.25) sfx.drumline();
         // sometimes the booth gets a quick one in while the offense lines up
-        announce(g.down >= 3 && g.toGo >= 5 ? "third" : "huddle", {chance: g.down >= 3 ? 0.4 : 0.2});
+        announce(g.down >= 3 && g.toGo >= 5 ? "third" : "huddle", {chance: g.down >= 3 ? 0.4 : g.rest ? 0.5 : 0.2});
       }
     } else if (P.stage === "lineup"){
       if (P.t >= LINEUP){
@@ -2531,6 +2568,10 @@ function update(dt){
       // motion: you jog out to the slot (a few seconds of sneaky rest, too)
       const k = ease(P.t/1.8), pl = g.play; g.p.x = lerp(0, pl.slotX, k); g.p.z = lerp(-5, -1.3, k);
       if (P.t >= 1.8) P.stage = "set";
+    } else if (P.stage === "shift"){
+      if (P.t >= g.shift.t) P.stage = "set";
+    } else if (P.stage === "survey" && P.t >= SURVEY && g.shift && !P.motioned && (!voiceBusy() || P.t > SURVEY + 2.5)){
+      P.stage = "shift"; P.t = 0; P.motioned = true; banner("Motion", "", 1); g.stats.rests++;
     } else if (P.stage === "survey" && P.t >= SURVEY && g.play.motion && !P.motioned && (!voiceBusy() || P.t > SURVEY + 2.5)){
       P.stage = "motion"; P.t = 0; P.motioned = true; banner("Motion!", "Out to the slot", 1.2);
     } else if ((P.stage === "set" || P.t >= SURVEY) && (!voiceBusy() || P.t > SURVEY + 2.5)){
@@ -2540,7 +2581,7 @@ function update(dt){
       banner("Down... set...", g.count === 2 ? "On two" : "", 1.6);
     }
     // a rough countdown to the snap, for anything that wants to know how long the huddle has left
-    g.t = P.stage === "huddle" ? LINEUP + SURVEY + 1 : P.stage === "lineup" ? LINEUP - P.t + SURVEY : P.stage === "motion" ? 1.8 - P.t : Math.max(0, SURVEY - P.t);
+    g.t = P.stage === "huddle" ? LINEUP + SURVEY + 1 : P.stage === "lineup" ? LINEUP - P.t + SURVEY : P.stage === "motion" ? 1.8 - P.t : P.stage === "shift" ? g.shift.t - P.t : Math.max(0, SURVEY - P.t);
   } else if (g.phase === "cadence"){
     const C = g.cad; C.t += dt;
     if (C.next == null){ if ((C.t > 0.6 && !voiceBusy()) || C.t > 3.5) C.next = C.t + 0.15; }
