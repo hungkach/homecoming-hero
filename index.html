@@ -76,6 +76,14 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .pick select{font:600 17px/1.2 var(--cond);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f1730;color:var(--ink);text-transform:none;letter-spacing:0}
 .coachCard{width:min(620px,100%);gap:8px;padding:14px 18px}
 .coachCard h2{font-size:clamp(28px,6vh,60px)}
+/* warm-up: the move name is huge, the how-to is one plain line, and a figure in the corner shows it */
+.coachCard.warm h2{font-size:clamp(44px,max(12vh,7vw),120px);line-height:.95}
+.coachCard.warm #calibMsg{font-size:clamp(20px,4.2vh,40px)!important;line-height:1.15}
+.warmBar{height:clamp(6px,1.2vh,12px);border-radius:999px;background:rgba(255,255,255,.18);overflow:hidden}
+.warmBar i{display:block;height:100%;width:100%;background:var(--gold);transform-origin:left center}
+.warmStep{font:600 clamp(14px,2.4vh,22px)/1 var(--cond);letter-spacing:.06em;color:var(--ink-dim)}
+#demo{position:fixed;right:calc(env(safe-area-inset-right,0px) + 12px);bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+  height:clamp(140px,40vh,320px);aspect-ratio:3/4;border-radius:18px;background:rgba(10,14,28,.72);border:2px solid rgba(255,255,255,.18);pointer-events:none}
 .diag{font:500 13px/1.3 var(--cond);color:var(--ink-dim);opacity:.8;font-variant-numeric:tabular-nums}
 /* 3rd down play card: arcade style, shown in the huddle and gone by the snap count */
 .playCard{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + clamp(100px,17vh,140px));transform:translateX(-50%);width:min(760px,calc(100% - 32px));
@@ -141,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, sneaky rest and pacing</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, warm-up demo figure</p>
   </div>
 </div>
 
@@ -176,14 +184,18 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 </div>
 
 <div class="overlay" id="calibScreen" hidden style="place-items:start center;background:none;pointer-events:none">
-  <div class="card coachCard" style="pointer-events:auto">
+  <div class="card coachCard" id="coachCard" style="pointer-events:auto">
+    <p id="warmStep" class="warmStep" hidden></p>
     <h2 id="calibTitle">Get in frame</h2>
     <p id="calibMsg" style="font-size:clamp(17px,2.8vh,28px)">Step back until your head and knees are both visible. About 4 feet is enough.</p>
+    <div id="warmBar" class="warmBar" hidden><i id="warmFill"></i></div>
     <p id="calibNote" class="note" hidden></p>
     <p id="calibDiag" class="diag"></p>
     <div class="btns"><button id="calibBack" class="ghost" type="button" style="flex:0 0 auto;padding:10px 16px;font-size:16px">Back</button></div>
   </div>
 </div>
+
+<canvas id="demo" width="240" height="320" hidden></canvas>
 
 <div class="overlay" id="pauseScreen" hidden>
   <div class="card">
@@ -1427,17 +1439,17 @@ window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keySta
 // Anything still not caught after two rounds gets a short third round.
 const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }};
 const WARM_MOVES = [
-  {id: "knees", big: "High knees!", small: "Sprint in place.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
-  {id: "leanL", big: "Lean left", small: "Tip your shoulders left, then back up.", say: "Lean left.", secs: 1.6, cap: ["lean"]},
-  {id: "leanR", big: "Lean right", small: "Tip your shoulders right, then back up.", say: "Lean right.", secs: 1.6, cap: ["lean"]},
-  {id: "hopL", big: "Bound left", small: "Out to the side, then straight back to center.", say: "Bound left, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "hopR", big: "Bound right", small: "Out to the side, then straight back to center.", say: "Bound right, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "squat", big: "Squat", small: "Drop your hips and hold.", say: "Squat.", secs: 2.0, cap: ["level"], once: true},
-  {id: "duck", big: "Truck!", small: "Duck your head and shoulder.", say: "Truck! Duck your head and shoulder.", secs: 1.8, cap: ["duck"]},
-  {id: "raiseL", big: "Stiff arm left", small: "Left arm out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
-  {id: "raiseR", big: "Stiff arm right", small: "Right arm out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
-  {id: "raiseB", big: "Block!", small: "Both arms out to the sides.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
-  {id: "jump", big: "Jump!", small: "Jump up like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
+  {id: "knees", big: "High knees!", small: "Run in place. Knees up to your waist.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
+  {id: "leanL", big: "Lean left", small: "Tip your shoulders left, like a cut. Then stand back up.", say: "Lean left.", secs: 1.6, cap: ["lean"]},
+  {id: "leanR", big: "Lean right", small: "Tip your shoulders right, like a cut. Then stand back up.", say: "Lean right.", secs: 1.6, cap: ["lean"]},
+  {id: "hopL", big: "Bound left", small: "One big hop to your left, then hop right back to the middle.", say: "Bound left, and back.", secs: 2.0, cap: ["hop"], once: true},
+  {id: "hopR", big: "Bound right", small: "One big hop to your right, then hop right back to the middle.", say: "Bound right, and back.", secs: 2.0, cap: ["hop"], once: true},
+  {id: "squat", big: "Squat", small: "Sit back like there's a chair behind you. Hold it.", say: "Squat.", secs: 2.0, cap: ["level"], once: true},
+  {id: "duck", big: "Truck!", small: "Dip your head and shoulder, like you're running someone over.", say: "Truck! Duck your head and shoulder.", secs: 1.8, cap: ["duck"]},
+  {id: "raiseL", big: "Stiff arm left", small: "Push your left arm straight out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
+  {id: "raiseR", big: "Stiff arm right", small: "Push your right arm straight out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
+  {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
+  {id: "jump", big: "Jump!", small: "Jump and reach up, like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
 const MOVE_NAMES = {step: "high knees", lean: "lean", hop: "bound", level: "squat", duck: "truck", raise: "arm raise", jump: "jump"};
 const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
@@ -1446,6 +1458,66 @@ function warmPlan(){
     roundIntro(2, "Same moves again."), ...WARM_MOVES.filter(m => !m.once).map(m => ({...m, round: 2}))];
 }
 const BEAT = 0.9;
+// the warm-up card: huge move name, a timer bar, round and step, and the demo figure in the corner
+function warmUI(S, t){
+  const on = !!(S && S.active && S.phase === "movetest" && S.cur);
+  $("coachCard").classList.toggle("warm", on);
+  $("warmBar").hidden = $("warmStep").hidden = $("demo").hidden = !on;
+  if (!on) return;
+  const cur = S.cur, moves = S.plan.filter(m => m.round === cur.round && m.cap && m.id !== "stand");
+  $("warmFill").style.transform = `scaleX(${clamp(S.stepT/S.stepLen, 0, 1)})`;
+  $("warmStep").textContent = cur.round ? `Round ${cur.round} · move ${moves.indexOf(cur) + 1} of ${moves.length}` : cur.id === "stand" ? "Warm-up" : "";
+  drawDemo($("demo"), cur.id, t);
+}
+/* A stick figure that loops the move, facing you like a mirror: "left" moves to your left on the screen. */
+function drawDemo(cv, id, t){
+  const x = cv.getContext("2d"), W = cv.width, H = cv.height;
+  x.clearRect(0, 0, W, H);
+  const P = {knees: 0.7, leanL: 1.6, leanR: 1.6, hopL: 1.6, hopR: 1.6, squat: 2, duck: 1.4, raiseL: 1.4, raiseR: 1.4, raiseB: 1.4, jump: 1.2}[id] || 2;
+  const u = (t % P)/P, wave = Math.sin(u*Math.PI*2), hold = Math.sin(Math.PI*clamp(u*1.25, 0, 1));   // hold: 0 → 1 → 0, then rest
+  const side = /L$/.test(id) ? -1 : 1, S = H/320;
+  let offX = 0, lift = 0, drop = 0, tilt = 0, duck = 0, armL = 0.15, armR = 0.15, kneeL = 0, kneeR = 0;
+  if (id === "knees"){ kneeL = Math.max(0, wave); kneeR = Math.max(0, -wave); armL = 0.3 + 0.3*Math.max(0, -wave); armR = 0.3 + 0.3*Math.max(0, wave); lift = 4*Math.abs(wave); }
+  else if (id === "leanL" || id === "leanR") tilt = side*0.38*hold;
+  else if (id === "hopL" || id === "hopR"){ const out = u < 0.15 ? ease(u/0.15) : u < 0.45 ? 1 : u < 0.6 ? 1 - ease((u - 0.45)/0.15) : 0; offX = side*55*out; lift = 18*(Math.sin(clamp(u/0.15, 0, 1)*Math.PI) + Math.sin(clamp((u - 0.45)/0.15, 0, 1)*Math.PI)); }
+  else if (id === "squat"){ drop = 42*hold; armL = armR = 1.4*hold + 0.15; }
+  else if (id === "duck"){ duck = hold; drop = 16*hold; tilt = -0.22*hold; armL = armR = 0.15 + 0.5*hold; }
+  else if (id === "raiseL") armL = 0.15 + 1.42*hold;
+  else if (id === "raiseR") armR = 0.15 + 1.42*hold;
+  else if (id === "raiseB") armL = armR = 0.15 + 1.42*hold;
+  else if (id === "jump"){ const j = Math.max(0, Math.sin(clamp(u/0.6, 0, 1)*Math.PI)); lift = 46*j; armL = armR = 0.15 + 2.6*j; }
+  x.save(); x.scale(S, S);
+  const cx = 120 + offX, ground = 296, hipY = 176 + drop - lift, torso = 70*(1 - 0.25*duck);
+  const hip = {x: cx, y: hipY}, neck = {x: hip.x + Math.sin(tilt)*torso, y: hip.y - Math.cos(tilt)*torso};
+  const head = {x: neck.x + Math.sin(tilt)*22, y: neck.y - Math.cos(tilt)*22 + duck*8};
+  const sh = k => ({x: neck.x + k*Math.cos(tilt)*24, y: neck.y + k*Math.sin(tilt)*24});
+  const limb = (a, b, c) => { x.beginPath(); x.moveTo(a.x, a.y); x.lineTo(b.x, b.y); if (c) x.lineTo(c.x, c.y); x.stroke(); };
+  // knee: two-bone solve between hip and foot, bending outward; a raised knee comes up toward the hip
+  const leg = (k, raise) => {
+    const h = {x: hip.x + k*13, y: hip.y}, L = 56;
+    if (raise > 0.05){ const kn = {x: h.x + k*6, y: h.y + L - 50*raise}; return [h, kn, {x: kn.x, y: kn.y + L}]; }
+    const f = {x: cx + k*22, y: ground - lift}, d = Math.min(Math.hypot(f.x - h.x, f.y - h.y), 2*L - 0.01), m = {x: (h.x + f.x)/2, y: (h.y + f.y)/2};
+    const off = Math.sqrt(Math.max(0, L*L - d*d/4)); return [h, {x: m.x + k*off, y: m.y}, f];
+  };
+  // arm angle a: 0 hangs down, 1.57 straight out to the side, about 2.7 overhead
+  const arm = (k, a) => {   // measured from the torso, so a lean tips the arms with it
+    const co = Math.cos(tilt), si = Math.sin(tilt), vx = k*Math.sin(a), vy = Math.cos(a), dx = vx*co - vy*si, dy = vx*si + vy*co, s0 = sh(k);
+    const el = {x: s0.x + dx*44, y: s0.y + dy*44}; return [s0, el, {x: el.x + dx*40, y: el.y + dy*40}];
+  };
+  // shadow
+  x.fillStyle = "rgba(0,0,0,.35)"; x.beginPath(); x.ellipse(cx, ground + 6, 44 - lift*0.3, 9, 0, 0, Math.PI*2); x.fill();
+  x.lineCap = x.lineJoin = "round"; x.strokeStyle = "#f4c542"; x.lineWidth = 13;
+  limb(...leg(-1, kneeL)); limb(...leg(1, kneeR));
+  limb(hip, neck); limb(sh(-1), sh(1));
+  limb(...arm(-1, armL)); limb(...arm(1, armR));
+  x.fillStyle = "#f4c542"; x.beginPath(); x.arc(head.x, head.y, 19, 0, Math.PI*2); x.fill();
+  // a ghost arrow for side-to-side moves
+  if (id === "hopL" || id === "hopR" || id === "leanL" || id === "leanR"){
+    x.strokeStyle = "rgba(255,255,255,.55)"; x.lineWidth = 6; const y0 = 40, x0 = 120 - side*30, x1 = 120 + side*60;
+    x.beginPath(); x.moveTo(x0, y0); x.lineTo(x1, y0); x.lineTo(x1 - side*14, y0 - 12); x.moveTo(x1, y0); x.lineTo(x1 - side*14, y0 + 12); x.stroke();
+  }
+  x.restore();
+}
 const setup = {active: false, phase: null, full: true, okFor: 0, lastCode: "", lastSay: 0, step: 0, stepT: 0, stepLen: 1, beats: [], heard: [], hits: [], frame: null, note: ""};
 function coach(big, small){ $("calibTitle").textContent = big; $("calibMsg").textContent = small || ""; }
 function sayCoach(code, text){ const t = now(); if (code !== setup.lastCode || t - setup.lastSay > 4){ setup.lastCode = code; setup.lastSay = t; say(text, true); } }
@@ -1466,6 +1538,7 @@ function orientationIssue(){
 }
 function updateSetup(dt){
   const t = now(), S = setup;
+  warmUI(S, t);
   if (S.phase === "frame" || S.phase === "reach"){
     const o = orientationIssue();
     if (o){ coach(o[0], o[1]); sayCoach("orient", o[0]); S.okFor = 0; S.frame = null; return; }
@@ -1553,6 +1626,7 @@ function updateSetup(dt){
   if (S.phase === "done"){ S.stepT -= dt; if (S.stepT <= 0) finishSetup(); }
 }
 function finishSetup(){
+  warmUI(null);
   setup.active = false; calibrating = false; $("calibScreen").hidden = true; BodyCore.drain();
   if (recentering){ recentering = false; paused = false; last = 0; } else beginGame();
 }
@@ -3592,6 +3666,7 @@ $("voiceSel").addEventListener("change", e => {
   primeAudio(); say("Inside zone right. Hole is right.", true);
 });
 $("calibBack").addEventListener("click", () => {
+  warmUI(null);
   setup.active = false; calibrating = false; $("calibScreen").hidden = true; BodyCore.captureStop();
   if (recentering){ recentering = false; paused = false; $("pauseScreen").hidden = false; paused = true; }
   else { $("setupScreen").hidden = false; renderSetup(); }
@@ -3605,7 +3680,7 @@ $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup,
+window.__hh = { get game(){ return game; }, input, startTouch, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup, warmPlan, warmUI, drawDemo, coach,
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();

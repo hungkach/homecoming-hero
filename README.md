@@ -61,7 +61,7 @@ Distances vary by device. Living room tries the back ultra-wide lens first, then
 ## Startup (every session, about a minute)
 
 1. **Framing check.** Live camera view with spoken coaching (step back, step closer, step left or right, tilt up or down) until you fit with a little margin. Full-body setups also check that your hands fit overhead.
-2. **Warm-up.** Two rounds of every move: high knees, lean left, lean right, bound left and back and bound right and back (first round only), squat (first round only), truck, stiff arm left, stiff arm right, block, jump. Anything the camera still missed gets a short third round. Each trigger is set to 50 percent of your weakest round that still showed the move, so it fires on a tired rep too.
+2. **Warm-up.** Each move shows up in big words with one plain line on how to do it, a timer bar, and a little figure in the corner that loops the move (it faces you like a mirror, so "left" moves to your left). Two rounds of every move: high knees, lean left, lean right, bound left and back and bound right and back (first round only), squat (first round only), truck, stiff arm left, stiff arm right, block, jump. Anything the camera still missed gets a short third round. Each trigger is set to 50 percent of your weakest round that still showed the move, so it fires on a tired rep too.
 3. **Latency check.** Four clicks to count in, then one arm out to the side on each of the next four beats. The measured delay (camera plus TV mirroring) is subtracted from every timing window.
 
 ## How it's built
