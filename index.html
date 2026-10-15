@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, Piper studio voices</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, run blocking rebuilt</p>
   </div>
 </div>
 
@@ -749,8 +749,8 @@ const PLAYS = [
   {name:"Power left", call:"I left, 27 power", scheme:"power", hole:-3.6, say:"Power left. Follow your guard."},
   {name:"Toss sweep right", call:"Twins right, 28 toss", scheme:"toss", hole: 7, say:"Toss sweep right. Get to the edge."},
   {name:"Toss sweep left", call:"Twins left, 29 toss", scheme:"toss", hole:-7, say:"Toss sweep left. Get to the edge."},
-  {name:"Outside zone right", call:"Ace right, 18 stretch", scheme:"ozone", hole: 5.5, say:"Outside zone right. Press the edge, then cut it up."},
-  {name:"Outside zone left", call:"Ace left, 19 stretch", scheme:"ozone", hole:-5.5, say:"Outside zone left. Press the edge, then cut it up."}
+  {name:"Outside zone right", call:"Ace right, 18 stretch", scheme:"ozone", hole: 4.6, say:"Outside zone right. Press the edge, then cut it up."},
+  {name:"Outside zone left", call:"Ace left, 19 stretch", scheme:"ozone", hole:-4.6, say:"Outside zone left. Press the edge, then cut it up."}
 ];
 // 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, both arms out on contact, anchor.
 // 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, go up for the catch.
@@ -2000,7 +2000,10 @@ function preSnapCam(g, c){
    everyone straight ahead. Receivers stalk-block the defensive back over them. A blocker who reaches his
    man locks on and drives him; the defender fights across his face toward the runner and sheds after a
    while (sooner in a goal line front, later quarters). Lanes open and close where the blocks win. */
-const SHED = {DL: [1.8, 3.4], LB: [1.0, 2.2], DB: [0.9, 2.0]};
+const SHED = {DL: [2.6, 4.0], LB: [1.4, 2.6], DB: [0.7, 1.5]};
+// Assignments, Madden style: every defender in the box gets a hat. When the box has more defenders than
+// blockers, the one left free is the man farthest backside, and he has to read the cutback before he chases.
+// Pullers get a real man too: power kicks out the playside linebacker, the toss leads on the edge.
 function makeBlockers(){
   const g = game, play = g.play, s = play.hole >= 0 ? 1 : -1, scheme = play.scheme || "zone", qd = (g.q - 1)/3;
   const D = g.defenders, taken = new Set();
@@ -2011,33 +2014,48 @@ function makeBlockers(){
   [-4, -2, 0, 2, 4].forEach((x, i) => B.push(mk("ol" + i, 50 + i*7 % 30, x, -0.9, "OL")));
   B.push(mk("te", 88, 6, -1.1, "TE"));
   for (const k of ["wr1", "wr2", "wr3"]){ const o = at(k); if (o) B.push(mk(k, o.num, o.f.x, o.f.z, "WR")); }
-  const free = (types, fn) => D.filter(d => types.includes(d.type) && !taken.has(d) && fn(d));
-  const claim = (b, d, drive, wait = 0) => { if (!d) return; taken.add(d); b.target = d; b.drive = norm2(drive); b.wait = wait; };
-  const nearest = (b, list, px = b.x, pz = b.z) => list.sort((a, c) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(c.x - px, c.z - pz))[0];
-  const ol = B.filter(b => b.kind === "OL"), te = B.find(b => b.kind === "TE");
-  // linemen first, playside to backside
-  const order = [...ol].sort((a, b) => s*(b.x - a.x));
-  for (const b of order){
-    const ps = s*b.x;                                       // + is playside of center
-    if (scheme === "power" && ps === -2){                   // the backside guard pulls through the hole
+  const claim = (b, d, drive, wait = 0) => { if (!d) return; taken.add(d); d.assigned = b.kind; b.target = d; b.drive = norm2(drive); b.wait = wait; };
+  const hole = play.hole === 99 ? 0 : play.hole;
+  const box = D.filter(d => d.type === "DL" || d.type === "LB" || (d.type === "DB" && d.z < 6 && Math.abs(d.x) < 7));
+  // pullers first: their path, and the man they're going to get
+  const ol = B.filter(b => b.kind === "OL"), te = B.find(b => b.kind === "TE"), line = [];
+  for (const b of ol){
+    const ps = s*b.x;
+    if (scheme === "power" && ps === -2){
       b.mode = "pull"; b.path = [{x: b.x, z: -2.2}, {x: s*3.4, z: -1.8}, {x: s*3.6, z: 1.5}];
-      continue;
-    }
-    if (scheme === "toss" && (ps === 2 || ps === 4)){        // playside guard and tackle pull to lead the toss
+      claim(b, box.filter(d => d.type === "LB" && !taken.has(d)).sort((a, c) => Math.abs(a.x - s*3.6) - Math.abs(c.x - s*3.6))[0], {x: s*0.6, z: 0.8});
+    } else if (scheme === "toss" && (ps === 2 || ps === 4)){
       b.mode = "pull"; b.path = [{x: b.x, z: -2}, {x: s*(ps === 4 ? 8 : 6.5), z: -1.5}, {x: s*(ps === 4 ? 9 : 7.5), z: 3}];
-      continue;
-    }
-    let dl, drive;
-    if (scheme === "power"){ dl = nearest(b, free(["DL"], d => s*(d.x - b.x) <= 0.3 && s*(d.x - b.x) > -2.6)); drive = {x: -s*0.8, z: 0.6}; }   // down block
-    else if (scheme === "dive"){ dl = nearest(b, free(["DL"], d => Math.abs(d.x - b.x) < 1.8)); drive = {x: Math.sign((dl ? dl.x : b.x) || s)*0.5, z: 1}; }
-    else { dl = nearest(b, free(["DL"], d => s*(d.x - b.x) >= -0.3 && s*(d.x - b.x) < 2.4)); drive = {x: s*0.8, z: 0.6}; }   // zone and toss reach playside
-    if (dl) claim(b, dl, drive);
-    else { const lb = nearest(b, free(["LB"], () => true), b.x + s*1.5, 4.5); claim(b, lb, {x: s*0.5, z: 1}, 0.15); b.mode = "climb"; }
+      claim(b, box.filter(d => d.type !== "DL" && !taken.has(d)).sort((a, c) => s*(c.x - a.x))[0], {x: s*0.8, z: 0.6});
+    } else line.push(b);
   }
-  // the tight end takes the edge: the end man on his side, or climbs
-  if (te){ const t = nearest(te, free(["LB"], d => Math.abs(d.x - te.x) < 6)) || nearest(te, free(["DL"], d => Math.abs(d.x - te.x) < 4)); claim(te, t, {x: Math.sign(te.x)*0.7, z: 0.7}, 0.05); }
-  // receivers stalk the defensive back over them
-  for (const w of B.filter(b => b.kind === "WR")){ const db = nearest(w, free(["DB"], d => Math.abs(d.x - w.x) < 8)); if (db){ claim(w, db, {x: Math.sign(w.x)*0.4, z: 1}, 0.3); w.mode = "climb"; } }
+  if (te) line.push(te);
+  // the rest of the box, playside first, linemen before linebackers; the backside man is left if we're short
+  const rest = box.filter(d => !taken.has(d)).sort((a, c) => (a.type === "DL" ? 0 : 1) - (c.type === "DL" ? 0 : 1) || s*(c.x - a.x));
+  if (rest.length > line.length){
+    const back = rest.slice().sort((a, c) => s*(a.x - c.x))[0];   // farthest backside
+    rest.splice(rest.indexOf(back), 1);
+    back.delay = (back.delay || 0) + 0.5; back.cutback = true;     // he reads cutback before he chases
+  }
+  const free = new Set(line);
+  for (const d of rest){
+    // the cheapest free blocker: distance, plus a penalty for blocking against the scheme's step
+    let best = null, bc = 1e9;
+    for (const b of free){
+      const dx = d.x - b.x, wrong = scheme === "power" ? Math.max(0, s*dx - 0.5) : scheme === "dive" ? 0 : Math.max(0, -s*dx - 0.5);
+      const c = Math.hypot(dx, d.z - b.z) + wrong*1.5 + (b.kind === "TE" && d.type === "DL" ? 1 : 0);
+      if (c < bc){ bc = c; best = b; }
+    }
+    if (!best) break;
+    free.delete(best);
+    const drive = scheme === "power" ? {x: -s*0.8, z: 0.6} : scheme === "dive" ? {x: Math.sign(d.x - hole || s)*0.6, z: 1} : {x: s*0.8, z: 0.6};
+    claim(best, d, drive, d.type === "DL" ? 0 : best.kind === "TE" ? 0.05 : 0.15);
+    if (d.type !== "DL") best.mode = "climb";
+  }
+  // anyone still free doubles the nearest down lineman, then climbs to whoever comes
+  for (const b of free){ b.mode = "climb"; b.wait = 0.4; }
+  // receivers stalk the corner over them; the safeties stay free to fill the alley
+  for (const w of B.filter(b => b.kind === "WR")){ const db = D.filter(d => d.type === "DB" && !taken.has(d) && Math.abs(d.x - w.x) < 5 && d.z < 10).sort((a, c) => Math.hypot(a.x - w.x, a.z - w.z) - Math.hypot(c.x - w.x, c.z - w.z))[0]; if (db){ claim(w, db, {x: Math.sign(w.x)*0.4, z: 1}, 0.3); w.mode = "climb"; } }
   // sheds: how long each block holds, shorter in later quarters and short-yardage fronts
   for (const b of B) if (b.target){ const r = SHED[b.target.type] || SHED.LB; b.target.shedAfter = rand(r[0], r[1]) - qd*0.4 - (b.target.shedBonus || 0); }
   return B;
@@ -2050,7 +2068,7 @@ function updateBlockers(dt, t){
     const d = b.target;
     if (b.engaged){
       // locked on: drive him; he fights across the blocker's face toward the runner
-      if (d.state === "down" || d.state === "resolved" || live - b.engagedAt >= d.shedAfter){ d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
+      if (d.state === "down" || d.state === "resolved" || live - b.engagedAt >= d.shedAfter){ d.shedAt = live; d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
       const push = b.kind === "OL" ? (d.type === "DL" ? 0.7 : 1.4) : 1.0;
       const fight = clamp(p.x - d.x, -1, 1)*0.5;
       b.x += (b.drive.x*push + fight*0.3)*dt; b.z += b.drive.z*push*dt;
@@ -2060,19 +2078,32 @@ function updateBlockers(dt, t){
     if (b.mode === "pull" && b.path){
       if (live < 0.15) continue;
       const w = b.path[0], dx = w.x - b.x, dz = w.z - b.z, dist = Math.hypot(dx, dz), sp = 6;
-      if (dist < 0.3){ b.path.shift(); if (!b.path.length){ b.mode = "seek"; const cand = g.defenders.filter(x => x.state !== "down" && x.state !== "resolved" && !x.block && x.z > -1 && Math.abs(x.x - b.x) < 5);
-        const t2 = cand.sort((a, c) => Math.hypot(a.x - b.x, a.z - b.z) - Math.hypot(c.x - b.x, c.z - b.z))[0]; if (t2){ b.target = t2; b.drive = norm2({x: Math.sign(b.x)*0.8, z: 0.6}); t2.shedAfter = rand(1.0, 2.0); } } continue; }
+      // close enough to his man on the way: peel off and take him now
+      if (b.target && !b.target.block && b.target.state !== "down" && b.target.state !== "resolved" && Math.hypot(b.target.x - b.x, b.target.z - b.z) < 2.2) b.path = [];
+      if (dist < 0.3 || !b.path.length){ b.path.shift(); if (!b.path.length){ b.mode = "seek"; b.path = null;
+        if (!b.target || b.target.block || b.target.state === "down" || b.target.state === "resolved"){
+          const cand = g.defenders.filter(x => x.state !== "down" && x.state !== "resolved" && !x.block && x.z > -1 && Math.abs(x.x - b.x) < 5);
+          const t2 = cand.sort((a, c) => Math.hypot(a.x - b.x, a.z - b.z) - Math.hypot(c.x - b.x, c.z - b.z))[0]; if (t2){ b.target = t2; b.drive = norm2({x: Math.sign(b.x)*0.8, z: 0.6}); t2.shedAfter = rand(1.4, 2.4); } } } continue; }
       b.vx = dx/dist*sp; b.vz = dz/dist*sp; b.x += b.vx*dt; b.z += b.vz*dt; continue;
+    }
+    if (!d && b.mode === "climb" && live >= b.wait){
+      // a spare blocker picks up whoever comes free near him
+      const c = g.defenders.filter(x => x.state !== "down" && x.state !== "resolved" && !x.block && x.type !== "DB" && Math.hypot(x.x - b.x, x.z - b.z) < 3.5).sort((a, c) => Math.hypot(a.x - b.x, a.z - b.z) - Math.hypot(c.x - b.x, c.z - b.z))[0];
+      if (c){ b.target = c; b.drive = norm2({x: Math.sign(c.x - b.x) || 1, z: 1}); if (c.shedAfter == null) c.shedAfter = rand(1.4, 2.4); }
+      continue;
     }
     if (!d || live < b.wait){ continue; }
     if (d.state === "down" || d.state === "resolved"){ b.target = null; continue; }
     if (d.block && d.block !== b){ b.target = null; continue; }   // someone else has him
-    const dx = d.x - b.x, dz = d.z - b.z, dist = Math.hypot(dx, dz), sp = b.kind === "OL" ? 5.8 : 6.5;
-    if (dist < 1.0){
-      b.engaged = true; b.engagedAt = live; d.block = b; d.state = d.state === "read" ? "blocked" : d.state;
+    // aim between him and the runner (his path to the ball), not where he is now
+    const rx = p.x - d.x, rz = p.z - d.z, rl = Math.hypot(rx, rz) || 1, fit = Math.min(0.9, rl*0.5);
+    const ax = d.x + rx/rl*fit, az = d.z + rz/rl*fit;
+    const dx = d.x - b.x, dz = d.z - b.z, dist = Math.hypot(dx, dz), sp = b.kind === "OL" ? 6.0 : 6.5;
+    if (dist < 1.25){
+      b.engaged = true; b.engagedAt = live; d.wasBlocked = live; d.block = b; d.state = d.state === "read" ? "blocked" : d.state;
       b.off = {x: dx/dist*0.85, z: dz/dist*0.85}; continue;
     }
-    const st = Math.min(dist - 0.9, sp*dt); b.x += dx/dist*st; b.z += dz/dist*st;
+    const ex = ax - b.x, ez = az - b.z, el = Math.hypot(ex, ez) || 1, st = Math.min(el, sp*dt); b.x += ex/el*st; b.z += ez/el*st;
   }
 }
 // runs: the most open lane for this play (bang inside, bend back, bounce outside), for a green arrow at the mesh
@@ -2214,6 +2245,8 @@ const REACH = 1.0;                                        // how far a defender'
 function runnerVel(p, t){ const h = p.xHist, a = h[h.length - 1], b = h.find(e => t - e.t <= 0.15) || a; const dt = a && b ? a.t - b.t : 0; return {x: dt > 0.03 ? (a.x - b.x)/dt : 0, z: p.speed}; }
 function resolveContact(d, t, tc = t){
   const g = game, p = g.p, m = MASS[d.type] || 1.1;
+  const who = {type: d.type, cutback: !!d.cutback, front: game.front, assigned: d.assigned || null, blocked: d.wasBlocked ?? null, shed: d.shedAt ?? null, live: -g.t, z: p.z, speed: p.speed, inBlock: !!d.block};   // for the tests
+  g.hits = g.hits || []; g.hits.push(who);
   d.state = "resolved";
   const sinceShoulder = tc - p.lastShoulder, sinceStiff = tc - p.lastStiff, sinceJuke = tc - p.lastJuke;
   const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz) || 0.01, nx = dx/dist, nz = dz/dist;
@@ -2256,6 +2289,7 @@ function resolveContact(d, t, tc = t){
   p.z += clamp((Pr - m*(defIn + 3.0))*0.3, 0, 2.5);
   d.vx = d.vz = 0;
   // near the line, it's a pile: fight for yards
+  g.tackler = who;
   if (g.playType === "run" && p.z < 6 && p.z < g.ballOn - 1){ if (d.block){ d.block.engaged = false; d.block = null; } startPile(d, t); return; }
   sfx.hit(); g.shake = 0.6;
   endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
@@ -2722,7 +2756,7 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.hits = []; g.tackler = null; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
