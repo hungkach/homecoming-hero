@@ -42,6 +42,8 @@ const HH = window.__hh;
     }
     if (g.phase === "live" && g.playType !== "pass"){
       if (t >= nextStep){ els.field._l.pointerdown({clientX:100, clientY:100}); els.field._l.pointerup({clientX:100, clientY:100}); nextStep = t + 1/(+process.env.CADENCE || 4.6); }
+      // the read: cut toward the green lane once, before the line
+      if (skill === "good" && g.lane && g.p.z < -0.5 && !g._readCut && Math.abs(g.lane.x - g.p.x) > 1.2){ g._readCut = true; HH.input.juke = Math.sign(g.lane.x - g.p.x); HH.input.jukeT = t; }
       if (skill === "good"){
         const p = g.p;
         const threat = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && (g.t <= -d.delay) && d.z > p.z && d.z - p.z < 2.3 && Math.abs(d.x - p.x) < 1.3)[0];
@@ -52,7 +54,7 @@ const HH = window.__hh;
         }
       }
     }
-    if (g.phase !== lastPhase){ if (g.phase === "dead") plays.push(`${g.result.kind}:${g.result.gain}`); lastPhase = g.phase; }
+    if (g.phase !== lastPhase){ if (g.phase === "dead"){ plays.push(`${g.result.kind}:${g.result.gain}`); if (g.playType === "run" || g.caught === false && g.play.scheme) (globalThis.__byScheme ||= []).push([g.play.scheme || "pass", g.result.gain]); } lastPhase = g.phase; }
     try { rafCb(ms); } catch(e){ errors++; if (errors < 4) console.error("frame error", e.stack.split("\n").slice(0,3).join(" | ")); }
   }
   const g = HH.game;
@@ -60,5 +62,6 @@ const HH = window.__hh;
   console.log("final", (els.endTitle||{}).textContent, "|", (els.endSub||{}).textContent);
   console.log("plays", plays.join(" "));
   console.log("stats", JSON.stringify(g.stats));
+  if (process.env.SCHEMES){ const by = {}; for (const [k, v] of (globalThis.__byScheme || [])) (by[k] ||= []).push(v); console.log("schemes " + JSON.stringify(by)); }
   console.log("pass plays", JSON.stringify({passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks}));
 })();

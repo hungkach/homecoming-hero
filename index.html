@@ -140,7 +140,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 15, lean to cut, forgiving moves</p>
+    <p class="diag" id="buildStamp">Build: Oct 15, run blocking and pile pushes</p>
   </div>
 </div>
 
@@ -729,13 +729,13 @@ const IDX = {nose:0,lSh:11,rSh:12,lEl:13,rEl:14,lWr:15,rWr:16,lHip:23,rHip:24,lK
 const COL = {home:"#1f5fbf", homeDark:"#163f80", away:"#b3262e", awayDark:"#7a161c", gold:"#ffcf3f", turfA:"#2f7d3a", turfB:"#2a7034",
   apron:"#21502a", line:"rgba(255,255,255,.9)", skin:"#c68a5e", skinDark:"#8f5b39", ball:"#7a3f1d", pants:"#e9e4d8", ink:"#f7f3ea"};
 const PLAYS = [
-  {name:"Inside zone right", hole: 2.2, say:"Inside zone right. Hole is right."},
-  {name:"Inside zone left", hole:-2.2, say:"Inside zone left. Hole is left."},
-  {name:"Dive", hole: 0, say:"Dive. Hit it straight up the middle."},
-  {name:"Power right", hole: 3.6, say:"Power right. Follow your guard."},
-  {name:"Power left", hole:-3.6, say:"Power left. Follow your guard."},
-  {name:"Toss sweep right", hole: 7, say:"Toss sweep right. Get to the edge."},
-  {name:"Toss sweep left", hole:-7, say:"Toss sweep left. Get to the edge."}
+  {name:"Inside zone right", scheme:"zone", hole: 2.2, say:"Inside zone right. Hole is right."},
+  {name:"Inside zone left", scheme:"zone", hole:-2.2, say:"Inside zone left. Hole is left."},
+  {name:"Dive", scheme:"dive", hole: 0, say:"Dive. Hit it straight up the middle."},
+  {name:"Power right", scheme:"power", hole: 3.6, say:"Power right. Follow your guard."},
+  {name:"Power left", scheme:"power", hole:-3.6, say:"Power left. Follow your guard."},
+  {name:"Toss sweep right", scheme:"toss", hole: 7, say:"Toss sweep right. Get to the edge."},
+  {name:"Toss sweep left", scheme:"toss", hole:-7, say:"Toss sweep left. Get to the edge."}
 ];
 // 3rd and 5 or more: you stay in to block. Find the blitzer, sit low, both arms out on contact, anchor.
 // 3rd and long, the other half: you run a route. Sprint to the cone, hop toward the break, go up for the catch.
@@ -1637,6 +1637,7 @@ function callPlay(){
   const g = game;
   if (window.__hhForcePass) return {type: "pass", play: PASS_PLAYS[Math.floor(Math.random()*PASS_PLAYS.length)]};   // test switches
   if (window.__hhForceRoute) return {type: "route", play: ROUTE_PLAYS[Math.floor(Math.random()*ROUTE_PLAYS.length)]};
+  if (window.__hhForcePlay && RUNS[window.__hhForcePlay]) return {type: "run", play: RUNS[window.__hhForcePlay]};
   const togo = Math.min(g.toGo, g.ballOn), goal = g.ballOn <= 5, short = togo <= 2, long = togo >= 7;
   const trailingLate = g.q === 4 && g.clock < 150 && g.home < g.away;
   // pass or run
@@ -1696,8 +1697,13 @@ function spawnDefense(){
   const g = game, d = (g.q - 1)/3;
   const D = [];
   const add = (type, x, z, speed, lat, react, delay) => D.push({type, x, z, speed, lat, react, delay, state:"read", vx:0, vz:0, num: Math.floor(rand(2, 99)), anim: rand(0, 6), downT:0});
-  // one defensive lineman sheds his block after a beat
-  add("DL", g.play.hole >= 0 ? rand(-3.5, -2) : rand(2, 3.5), 1, 5.2 + d*0.6, 2.6, 0.35, 2.4 - d*0.6);   // backside, away from the hole
+  if (g.playType === "run"){
+    // four real defensive linemen, each taken on by a blocker (see makeBlockers)
+    for (const x of [-3, -1, 1, 3]) add("DL", x + rand(-0.3, 0.3), 0.7, 5.2 + d*0.6, 2.6, 0.35, 0);
+  } else {
+    // pass plays keep the abstract line: one defensive lineman sheds his block after a beat
+    add("DL", g.play.hole >= 0 ? rand(-3.5, -2) : rand(2, 3.5), 1, 5.2 + d*0.6, 2.6, 0.35, 2.4 - d*0.6);
+  }
   add("LB", rand(-7, -4), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
   add("LB", rand(-1.5, 1.5), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.2);
   add("LB", rand(4, 7), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
@@ -1708,12 +1714,13 @@ function spawnDefense(){
   // run blocking: linemen climb to the linebackers, who have to shed before they can pursue.
   // The one closest to the hole sheds last, so the hole is real.
   const lbs = D.filter(x => x.type === "LB").sort((a, b) => Math.abs(a.x - g.play.hole) - Math.abs(b.x - g.play.hole));
-  lbs.forEach((x, i) => x.blockedUntil = (i === 0 ? rand(1.0, 1.5) : rand(0.6, 1.1)) - d*0.25);
+  if (g.playType !== "run") lbs.forEach((x, i) => x.blockedUntil = (i === 0 ? rand(1.0, 1.5) : rand(0.6, 1.1)) - d*0.25);   // runs use real blocks instead
+  else lbs.forEach(x => x.delay = rand(0.45, 0.7) - d*0.15);   // on runs, linebackers read the play before they fill
   const front = g.front || "base", dbs = D.filter(x => x.type === "DB");
   if (front === "goal line"){
     // everyone packed in close: the line sheds sooner, linebackers fill fast, but there's no one deep
-    D[0].delay -= 0.8;
-    for (const x of lbs){ x.z = rand(3, 4); x.blockedUntil -= 0.35; }
+    for (const x of D) if (x.type === "DL"){ x.delay -= 0.8; x.shedBonus = 0.6; }
+    for (const x of lbs){ x.z = rand(3, 4); if (x.blockedUntil) x.blockedUntil -= 0.35; x.shedBonus = 0.4; }
     dbs.forEach((x, i) => { x.z = rand(5, 7.5); x.x = [-6, 6, -11, 11][i]; });
   } else if (front === "nickel"){
     // a light box: one linebacker comes off for a fifth defensive back, everyone plays deep
@@ -1785,6 +1792,126 @@ function preSnapCam(g, c){
     c.yaw = u < 0.3 ? -look*ease(u/0.3) : u < 0.7 ? lerp(-look, look, ease((u - 0.3)/0.4)) : look*(1 - ease((u - 0.7)/0.3));
   }
   return c;
+}
+
+/* ============ run blocking ============
+   Every run has a blocking scheme, like a real playbook. Each blocker gets an assignment at the snap:
+   zone steps playside together and climbs to the linebackers, power down-blocks and pulls the backside
+   guard through the hole, toss pulls the playside guard and tackle out in front, and the dive drives
+   everyone straight ahead. Receivers stalk-block the defensive back over them. A blocker who reaches his
+   man locks on and drives him; the defender fights across his face toward the runner and sheds after a
+   while (sooner in a goal line front, later quarters). Lanes open and close where the blocks win. */
+const SHED = {DL: [1.8, 3.4], LB: [1.0, 2.2], DB: [0.9, 2.0]};
+function makeBlockers(){
+  const g = game, play = g.play, s = play.hole >= 0 ? 1 : -1, scheme = play.scheme || "zone", qd = (g.q - 1)/3;
+  const D = g.defenders, taken = new Set();
+  const offense = g.offense || [];
+  const at = key => offense.find(o => o.key === key) || null;
+  const B = [];
+  const mk = (key, num, x, z, kind) => ({key, num, kind, x, z, vx: 0, vz: 0, target: null, mode: "seek", path: null, drive: {x: 0, z: 1}, wait: 0});
+  [-4, -2, 0, 2, 4].forEach((x, i) => B.push(mk("ol" + i, 50 + i*7 % 30, x, -0.9, "OL")));
+  B.push(mk("te", 88, 6, -1.1, "TE"));
+  for (const k of ["wr1", "wr2", "wr3"]){ const o = at(k); if (o) B.push(mk(k, o.num, o.f.x, o.f.z, "WR")); }
+  const free = (types, fn) => D.filter(d => types.includes(d.type) && !taken.has(d) && fn(d));
+  const claim = (b, d, drive, wait = 0) => { if (!d) return; taken.add(d); b.target = d; b.drive = norm2(drive); b.wait = wait; };
+  const nearest = (b, list, px = b.x, pz = b.z) => list.sort((a, c) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(c.x - px, c.z - pz))[0];
+  const ol = B.filter(b => b.kind === "OL"), te = B.find(b => b.kind === "TE");
+  // linemen first, playside to backside
+  const order = [...ol].sort((a, b) => s*(b.x - a.x));
+  for (const b of order){
+    const ps = s*b.x;                                       // + is playside of center
+    if (scheme === "power" && ps === -2){                   // the backside guard pulls through the hole
+      b.mode = "pull"; b.path = [{x: b.x, z: -2.2}, {x: s*3.4, z: -1.8}, {x: s*3.6, z: 1.5}];
+      continue;
+    }
+    if (scheme === "toss" && (ps === 2 || ps === 4)){        // playside guard and tackle pull to lead the toss
+      b.mode = "pull"; b.path = [{x: b.x, z: -2}, {x: s*(ps === 4 ? 8 : 6.5), z: -1.5}, {x: s*(ps === 4 ? 9 : 7.5), z: 3}];
+      continue;
+    }
+    let dl, drive;
+    if (scheme === "power"){ dl = nearest(b, free(["DL"], d => s*(d.x - b.x) <= 0.3 && s*(d.x - b.x) > -2.6)); drive = {x: -s*0.8, z: 0.6}; }   // down block
+    else if (scheme === "dive"){ dl = nearest(b, free(["DL"], d => Math.abs(d.x - b.x) < 1.8)); drive = {x: Math.sign((dl ? dl.x : b.x) || s)*0.5, z: 1}; }
+    else { dl = nearest(b, free(["DL"], d => s*(d.x - b.x) >= -0.3 && s*(d.x - b.x) < 2.4)); drive = {x: s*0.8, z: 0.6}; }   // zone and toss reach playside
+    if (dl) claim(b, dl, drive);
+    else { const lb = nearest(b, free(["LB"], () => true), b.x + s*1.5, 4.5); claim(b, lb, {x: s*0.5, z: 1}, 0.15); b.mode = "climb"; }
+  }
+  // the tight end takes the edge: the end man on his side, or climbs
+  if (te){ const t = nearest(te, free(["LB"], d => Math.abs(d.x - te.x) < 6)) || nearest(te, free(["DL"], d => Math.abs(d.x - te.x) < 4)); claim(te, t, {x: Math.sign(te.x)*0.7, z: 0.7}, 0.05); }
+  // receivers stalk the defensive back over them
+  for (const w of B.filter(b => b.kind === "WR")){ const db = nearest(w, free(["DB"], d => Math.abs(d.x - w.x) < 8)); if (db){ claim(w, db, {x: Math.sign(w.x)*0.4, z: 1}, 0.3); w.mode = "climb"; } }
+  // sheds: how long each block holds, shorter in later quarters and short-yardage fronts
+  for (const b of B) if (b.target){ const r = SHED[b.target.type] || SHED.LB; b.target.shedAfter = rand(r[0], r[1]) - qd*0.4 - (b.target.shedBonus || 0); }
+  return B;
+}
+function norm2(v){ const l = Math.hypot(v.x, v.z) || 1; return {x: v.x/l, z: v.z/l}; }
+function updateBlockers(dt, t){
+  const g = game, p = g.p, live = -g.t;
+  for (const b of g.blockers){
+    b.anim = (b.anim || 0) + dt*8;
+    const d = b.target;
+    if (b.engaged){
+      // locked on: drive him; he fights across the blocker's face toward the runner
+      if (d.state === "down" || d.state === "resolved" || live - b.engagedAt >= d.shedAfter){ d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
+      const push = b.kind === "OL" ? (d.type === "DL" ? 0.7 : 1.4) : 1.0;
+      const fight = clamp(p.x - d.x, -1, 1)*0.5;
+      b.x += (b.drive.x*push + fight*0.3)*dt; b.z += b.drive.z*push*dt;
+      d.x = b.x + b.off.x + fight*0.15; d.z = b.z + b.off.z; d.vx = b.drive.x*push; d.vz = b.drive.z*push;
+      continue;
+    }
+    if (b.mode === "pull" && b.path){
+      if (live < 0.15) continue;
+      const w = b.path[0], dx = w.x - b.x, dz = w.z - b.z, dist = Math.hypot(dx, dz), sp = 6;
+      if (dist < 0.3){ b.path.shift(); if (!b.path.length){ b.mode = "seek"; const cand = g.defenders.filter(x => x.state !== "down" && x.state !== "resolved" && !x.block && x.z > -1 && Math.abs(x.x - b.x) < 5);
+        const t2 = cand.sort((a, c) => Math.hypot(a.x - b.x, a.z - b.z) - Math.hypot(c.x - b.x, c.z - b.z))[0]; if (t2){ b.target = t2; b.drive = norm2({x: Math.sign(b.x)*0.8, z: 0.6}); t2.shedAfter = rand(1.0, 2.0); } } continue; }
+      b.vx = dx/dist*sp; b.vz = dz/dist*sp; b.x += b.vx*dt; b.z += b.vz*dt; continue;
+    }
+    if (!d || live < b.wait){ continue; }
+    if (d.state === "down" || d.state === "resolved"){ b.target = null; continue; }
+    if (d.block && d.block !== b){ b.target = null; continue; }   // someone else has him
+    const dx = d.x - b.x, dz = d.z - b.z, dist = Math.hypot(dx, dz), sp = b.kind === "OL" ? 5.8 : 6.5;
+    if (dist < 1.0){
+      b.engaged = true; b.engagedAt = live; d.block = b; d.state = d.state === "read" ? "blocked" : d.state;
+      b.off = {x: dx/dist*0.85, z: dz/dist*0.85}; continue;
+    }
+    const st = Math.min(dist - 0.9, sp*dt); b.x += dx/dist*st; b.z += dz/dist*st;
+  }
+}
+// runs: the most open lane for this play (bang inside, bend back, bounce outside), for a green arrow at the mesh
+function openLane(){
+  const g = game, s = g.play.hole >= 0 ? 1 : -1, sch = g.play.scheme;
+  const lanes = sch === "toss" ? [{x: s*7.5, k: "edge"}, {x: s*4.5, k: "cut up"}] : sch === "power" ? [{x: s*3.6, k: "follow"}, {x: s*6, k: "bounce"}] :
+    sch === "dive" ? [{x: -1, k: "left"}, {x: 1, k: "right"}] : [{x: s*1.2, k: "bang"}, {x: -s*1.6, k: "bend"}, {x: s*6.2, k: "bounce"}];
+  let best = null;
+  for (const L of lanes){
+    let room = 9;
+    for (const d of g.defenders){ if (d.state === "down" || d.state === "resolved" || d.z > 6 || d.z < -1) continue; const r = Math.abs(d.x - L.x) + (d.block ? 0.9 : 0); room = Math.min(room, r); }
+    for (const b of g.blockers || []) if (b.z < 1.2) room = Math.min(room, Math.abs(b.x - L.x) + 0.5);
+    if (!best || room > best.room) best = {...L, room};
+  }
+  return best;
+}
+// fight for yards: a tackle near the line turns into a pile you can push with fast knees and a low shoulder
+function startPile(d, t){
+  const g = game, p = g.p;
+  g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0};
+  p.speed = 0; sfx.hit(); g.shake = 0.5; crowd(0.3, 2.2);
+  banner("Fight for yards!", "Keep those knees driving!", 1.6);
+}
+function updatePile(dt, t){
+  const g = game, p = g.p, pl = g.pile;
+  const sps = stepsPerSec(t), low = t - p.lastShoulder < 1.5 || (mode === "body" && BodyCore.state.stance > 0.55);
+  pl.t += dt;
+  const drive = Math.max(0, sps - 1.5)*0.65*(low ? 1.4 : 1)*(1 - pl.t/pl.dur);   // about 3 yards for fast knees and a low shoulder
+  p.z += drive*dt; pl.gained = p.z - pl.start;
+  if (pl.d){ pl.d.z = p.z + 0.5; pl.d.x += (p.x - pl.d.x)*dt*4; }
+  // help arrives: the pile stops sooner
+  for (const d of g.defenders) if (d !== pl.d && d.state !== "down" && d.state !== "resolved" && !d.block && Math.hypot(d.x - p.x, d.z - p.z) < 1.4){ pl.dur = Math.min(pl.dur, pl.t + 0.8); d.state = "resolved"; }
+  p.bob += dt*(2 + sps*2.2); g.shake = Math.max(g.shake, 0.15);
+  if (pl.t >= pl.dur){
+    const extra = Math.round(pl.gained);
+    g.pile = null;
+    endPlay("tackle", extra >= 1 ? `Drove the pile ${extra} more` : "Stood up at the pile");
+  }
 }
 
 /* ============ live play ============ */
@@ -1907,11 +2034,13 @@ function resolveContact(d, t, tc = t){
     return;
   }
   let hold = FORM[d.type] ?? 0.75;
+  if (d.block) hold *= 0.4;                                // a grab from inside a block
   if (dive) hold *= 0.45;
   else if (Math.abs(dx) > 0.6 || nz < 0.3) hold *= 0.7;    // an arm tackle from the side or behind
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
   if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
   hold = Math.max(hold, 0.25);                             // nobody is untackleable
+  if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
   if (Math.random() >= hold){
     // broken: he's knocked back along the line of the hit, and it costs you some speed
     const kick = Pr/m*0.8 + 1;
@@ -1926,6 +2055,8 @@ function resolveContact(d, t, tc = t){
   // tackled: a fast runner falls forward for extra yards
   p.z += clamp((Pr - m*(defIn + 3.0))*0.3, 0, 2.5);
   d.vx = d.vz = 0;
+  // near the line, it's a pile: fight for yards
+  if (g.playType === "run" && p.z < 6 && p.z < g.ballOn - 1){ if (d.block){ d.block.engaged = false; d.block = null; } startPile(d, t); return; }
   sfx.hit(); g.shake = 0.6;
   endPlay("tackle", d.type === "DB" ? "Brought down by the secondary" : d.type === "LB" ? "Linebacker makes the stop" : "Lineman gets there");
 }
@@ -1962,7 +2093,14 @@ function updateQB(dt){
 function updateLive(dt, t){
   const g = game, p = g.p;
   g.stats.work += dt;
+  if (g.pile){ updatePile(dt, t); return; }
   updateHandoff(dt, t); updateQB(dt);
+  if (g.blockers){
+    updateBlockers(dt, t);
+    // the read: where the blocks are winning, shown as a green arrow until you hit the line
+    if (p.z < 0.5 && -g.t >= 0.35 && -g.t - g.laneAt >= 0.25){ g.lane = openLane(); g.laneAt = -g.t; }
+    if (p.z >= 0.5) g.lane = null;
+  }
   // speed from step cadence
   const sps = stepsPerSec(t);
   // speed from cadence: linear up to 4 steps a second, then each extra step buys a bit less, so faster
@@ -1996,14 +2134,12 @@ function updateLive(dt, t){
   const prevZ = p.z;
   p.z += p.speed*dt;
   p.xHist.push({t, x: p.x, z: p.z}); while (p.xHist.length && t - p.xHist[0].t > 1) p.xHist.shift();
-  // the line of scrimmage: run through the hole or get stuffed
+  // traffic: running into the back of a block slows you and slides you off it; pick the open lane
   if (prevZ < 0 && p.z >= 0 && !p.crossedLOS){ p.crossedLOS = true; p.losAt = t; }
-  if (p.losAt != null && t >= p.losAt + LAT()){   // wait out the camera delay so a late cut into the hole still counts
-    const tc = p.losAt; p.losAt = null;
-    const inScrum = Math.abs(p.x) < 4.8, inHole = Math.abs(p.x - g.play.hole) < 1.7;
-    if (inScrum && !inHole){
-      if (tc - p.lastShoulder < 0.6 && Math.random() < 0.4){ banner("Pushed the pile!", "", 1); sfx.pads(); p.speed *= 0.5; }
-      else { p.z = 0.5; sfx.hit(); endPlay("stuffed"); return; }
+  if (g.blockers){
+    for (const b of g.blockers){
+      const dx = p.x - b.x, dz = b.z - p.z;
+      if (dz > -0.2 && dz < 0.9 && Math.abs(dx) < 0.75){ p.speed = Math.min(p.speed, 2.5); p.x += (Math.sign(dx) || 1)*1.6*dt; }
     }
   }
   if (p.speed < 0.5 && p.z < 0){ p.stall += dt; } else p.stall = 0;
@@ -2014,15 +2150,19 @@ function updateLive(dt, t){
     if (d.state === "resolved") continue;
     if (d.state === "contact"){   // committed to the tackle; hold until the delayed input window closes
       d.z = Math.max(d.z, p.z + 0.4);
-      if (t >= d.contactAt + LAT()){ resolveContact(d, t, d.contactAt); if (g.phase !== "live") return; }
+      if (t >= d.contactAt + LAT()){ resolveContact(d, t, d.contactAt); if (g.phase !== "live" || g.pile) return; }
+      continue;
+    }
+    const dd = Math.hypot(d.x - p.x, d.z - p.z);
+    if (d.block){   // engaged with a blocker: one grab at you as you go by
+      if (!d.grabbed && dd < 0.85){ d.grabbed = true; if (LAT() > 0){ d.state = "contact"; d.contactAt = t; } else { resolveContact(d, t); if (g.phase !== "live" || g.pile) return; } }
       continue;
     }
     moveDefender(d, dt, t);               // g.t counts down from 0 after the snap
     // contact inside his reach; a dive only when you're getting past him (he's level or behind you)
-    const dd = Math.hypot(d.x - p.x, d.z - p.z);
     if (g.t <= -d.delay && !d.engaged && (dd < REACH || (dd < REACH + 0.4 && d.z <= p.z + 0.2))){
       if (LAT() > 0){ d.state = "contact"; d.contactAt = t; continue; }
-      resolveContact(d, t); if (g.phase !== "live") return;
+      resolveContact(d, t); if (g.phase !== "live" || g.pile) return;
     }
   }
   separate(g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact"));
@@ -2318,6 +2458,7 @@ function update(dt){
     g.t -= dt;
     if (g.t <= 0.35 && !g.hutDone){ g.hutDone = true; sfx.hut(); banner("Hut!", g.playType === "pass" ? "Find your man!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s < 0.4);
+      g.blockers = g.playType === "run" ? makeBlockers() : null; g.pile = null; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
@@ -2481,12 +2622,14 @@ function drawPlayers(c, t){
     const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
     const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
     const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset;
-    for (let i=0;i<5;i++){
+    if (g.blockers && g.phase !== "huddle" && g.phase !== "cadence") for (const b of g.blockers)
+      items.push({z: b.z, x: b.x, draw: () => figure(c, b.x, b.z, {jersey: COL.home, trim: COL.gold, num: b.num, back: true, crouch: b.engaged ? 0.4 : 0.1, anim: b.anim || 0})});
+    else for (let i=0;i<5;i++){
       let x = slots[i];
       if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
       items.push({z: olZ, x, draw: () => figure(c, x, olZ, {jersey: COL.home, trim: COL.gold, num: 50 + i*7 % 30, back: true, crouch: 0.4, anim: t*6 + i})});
     }
-    for (let i=0;i<4;i++){
+    if (g.playType !== "run") for (let i=0;i<4;i++){
       let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
       items.push({z: dlZ, x, draw: () => figure(c, x, dlZ, {jersey: COL.away, trim: "#f2e6d0", num: 90 + i, crouch: 0.4, anim: t*6 + i*2})});
     }
@@ -2498,10 +2641,16 @@ function drawPlayers(c, t){
     items.push({z: d.z, x: d.x, draw: () => figure(c, d.x, d.z, {jersey: COL.away, trim: "#f2e6d0", num: d.num, down: d.state === "down" || (d.state === "resolved" && g.phase === "dead"), anim: (g.phase === "live" ? d.anim : 0), crouch: d.crouch ?? (g.phase === "live" ? 0 : 0.25)})});
   }
   items.sort((a, b) => b.z - a.z);
-  for (const it of items) if (it.z > c.z + 0.4) it.draw();
+  for (const it of items) if (it.z > c.z + 0.8) it.draw();   // someone right on top of you would fill the screen
 }
 function drawCues(c, t, world2D){
   const g = game; if (!g) return;
+  // the read: a green arrow on the open lane while you're still behind the line
+  if (g.phase === "live" && g.lane && g.p.z < 0.5){
+    const a = proj(c, g.lane.x, 0.05, 1.8), b = proj(c, g.lane.x, 0.05, 4.2);
+    if (a && b){ const pulse = 0.55 + 0.35*Math.sin(t*10), w = Math.max(10, a.s*0.9);
+      cx.fillStyle = `rgba(90,230,120,${pulse})`; cx.beginPath(); cx.moveTo(b.x, b.y); cx.lineTo(a.x - w, a.y); cx.lineTo(a.x - w*0.35, a.y); cx.lineTo(a.x - w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y); cx.lineTo(a.x + w, a.y); cx.closePath(); cx.fill(); }
+  }
   // pass pro: a ring that closes on the blitzer right as he arrives, so you can time the punch
   if (g.playType === "pass" && g.phase === "live" && g.pp.rusher.state === "rush" && g.pp.eta < 0.9){
     const r = g.pp.rusher, q = proj(c, r.x, 1.0, r.z);
@@ -3145,17 +3294,22 @@ const R3 = (() => {
       const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") && g.pp ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
       const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset, live = g.phase === "live";
       const pre = g.offense && (g.phase === "huddle" || g.phase === "cadence"), stage = preSnap(g).stage;
+      if (g.blockers && !pre) for (const b of g.blockers){
+        // run blocking: blockers drawn where they are, arms out when locked on
+        put("home", b.num, {x: b.x, z: b.z, face: b.engaged ? Math.atan2(b.drive.x, -b.drive.z) + Math.PI : undefined, fixedFace: !!b.engaged,
+          crouch: b.engaged ? 0.45 : 0.15, run: 0, anim: b.anim || 0, reach: b.engaged ? 0.8 : 0}, "blk" + b.key, Math.PI);
+      }
       if (g.offense) for (const o of g.offense){
         // before the snap everyone comes from the offense list; after it, only the receivers, tight end, and a shotgun QB
-        if (!pre && (o.kind === "OL" || (o.kind === "QB" && g.qb))) continue;
+        if (!pre && (o.kind === "OL" || (o.kind === "QB" && g.qb) || (g.blockers && o.kind !== "QB"))) continue;
         const inHuddle = stage === "huddle", set = !inHuddle && stage !== "lineup";
         put("home", o.num, {x: o.x, z: o.z, face: o.face ?? undefined, fixedFace: o.face != null && (inHuddle || set), crouch: inHuddle ? 0.3 : set && o.kind === "OL" ? 0.75 : set ? 0.35 : 0.1, run: 0, anim: t*6, reach: live && o.kind === "TE" ? 0.7 : 0}, "off" + o.key, Math.PI);
       }
-      if (!pre) for (let i = 0; i < 5; i++){
+      if (!pre && !g.blockers) for (let i = 0; i < 5; i++){
         let x = slots[i]; if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
         put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, fixedFace: true, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0}, "ol" + i, Math.PI);
       }
-      for (let i = 0; i < 4; i++){
+      if (g.playType !== "run") for (let i = 0; i < 4; i++){
         let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
         put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, fixedFace: true, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0}, "dl" + i, 0);
       }
