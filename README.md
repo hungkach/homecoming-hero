@@ -10,7 +10,8 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | --- | --- | --- |
 | Take the handoff | Start sprinting at the snap; the QB meets you at the mesh (or pitches on a toss) | Tap fast |
 | Sprint | High knees in place. Faster knees run faster, and higher knees add a little more; tired, lower knees still count | Tap fast |
-| Find the hole | Automatic: behind the line you follow the most open lane (bang, bend, or bounce); past it you bend toward open grass. Your job is speed and power | Automatic (a sideways swipe still jukes) |
+| Find the hole | Automatic: behind the line you follow the most open lane (bang, bend, or bounce); past it you bend toward open grass. When a defender squares you up, a gold ring and a beep mark him and the path stops: your move | Automatic |
+| Juke | Bound out to one side and straight back | Swipe sideways |
 | Goal line dive | Inside the 3: jump at the line to go over the top. Leave from the pile, not early; speed carries you farther | Swipe up (it replaces the stiff arm there) |
 | Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards | Swipe down |
 | Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out. On a breakaway, when one man closes from the side and nobody else is around, your view glances at him and that edge flashes red with a hand | Swipe up |
@@ -65,7 +66,7 @@ Distances vary by device. Living room tries the back ultra-wide lens first, then
 ## Startup (every session, about a minute)
 
 1. **Framing check.** Live camera view with spoken coaching (step back, step closer, step left or right, tilt up or down) until you fit with a little margin. Full-body setups also check that your hands fit overhead.
-2. **Warm-up.** Each move shows up in big words with one plain line on how to do it, a timer bar, and a little figure in the corner that loops the move (it faces you like a mirror, so "left" moves to your left). Two rounds of every move: an easy jog (your tired pace, so tired knees still count), high knees, truck (a quick squat), stiff arm left, stiff arm right, block, jump. Anything the camera still missed gets a short third round. Each trigger is set to 50 percent of your weakest round that still showed the move, so it fires on a tired rep too.
+2. **Warm-up.** Each move shows up in big words with one plain line on how to do it, a timer bar, and a little figure in the corner that loops the move (it faces you like a mirror, so "left" moves to your left). Two rounds of every move: an easy jog (your tired pace, so tired knees still count), high knees, juke left and juke right (bound out and back, first round only), truck (a quick squat), stiff arm left, stiff arm right, block, jump. Anything the camera still missed gets a short third round. Each trigger is set to 50 percent of your weakest round that still showed the move, so it fires on a tired rep too.
 3. **Latency check.** Four clicks to count in, then one arm out to the side on each of the next four beats. The measured delay (camera plus TV mirroring) is subtracted from every timing window.
 
 ## How it's built

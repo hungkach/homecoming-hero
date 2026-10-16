@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 17, automatic lanes, male voices</p>
+    <p class="diag" id="buildStamp">Build: Oct 17, bound juke is back</p>
   </div>
 </div>
 
@@ -1513,13 +1513,15 @@ const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet u
 const WARM_MOVES = [
   {id: "jog", big: "Easy jog", small: "Jog in place, knees low. Your tired pace.", say: "Easy jog in place. Knees low.", secs: 2.6, cap: ["step"], capRound: "jog"},
   {id: "knees", big: "High knees!", small: "Run in place. Knees up to your waist.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
+  {id: "hopL", big: "Juke left", small: "One big hop to your left, then hop right back to the middle.", say: "Juke left. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
+  {id: "hopR", big: "Juke right", small: "One big hop to your right, then hop right back to the middle.", say: "Juke right. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
   {id: "squat", big: "Truck!", small: "Drop into a quick squat, like lowering your shoulder into him.", say: "Truck! Squat low.", secs: 2.0, cap: ["level"]},
   {id: "raiseL", big: "Stiff arm left", small: "Push your left arm straight out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
   {id: "raiseR", big: "Stiff arm right", small: "Push your right arm straight out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
   {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
   {id: "jump", big: "Jump!", small: "Jump and reach up, like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
-const MOVE_NAMES = {step: "high knees", level: "truck squat", raise: "arm raise", jump: "jump"};
+const MOVE_NAMES = {step: "high knees", hop: "juke bound", level: "truck squat", raise: "arm raise", jump: "jump"};
 const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
 function warmPlan(){
   return [WARM_STAND, roundIntro(1, "Every move once."), ...WARM_MOVES.map(m => ({...m, round: 1})),
@@ -1706,6 +1708,7 @@ function pumpBody(){
     if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t, e.h);
+    else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }   // a juke: bound out and back (a lean no longer counts)
     else if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
     else if (e.type === "raise"){
       if (game.playType === "pass"){   // the pass pro block is both arms out together
@@ -2149,11 +2152,15 @@ function openLane(){
 // switching only for a clearly better one. Past the line: every 0.15 s, score a few spots left and right by
 // how far the nearest free tackler in the next 8 yards would be, and bend toward the best one. Your job is speed and power.
 function autoPath(g, p, dt, t){
-  if (p.z < 0.3 && !g.caught){
+  if (p.z < 0.3 && !g.caught && !g.squared){
     const want = g.lane ? g.lane.x : g.play.hole;
     p.x += clamp(want - p.x, -1, 1)*dt*3.6;
     return;
   }
+  // squared up: a free defender right in front of you. The path stops looking; you pick truck, juke, or stiff arm.
+  const sq = g.defenders.find(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact" && !d.block && g.t <= -d.delay && d.z - p.z > 0.4 && d.z - p.z < 5 && Math.abs(d.x - p.x) < 1.3);
+  if (sq){ if (g.squared !== sq){ g.squared = sq; sfx.breakCue(0); } return; }
+  g.squared = null;
   if (t - (p.pathAt || -9) > 0.3){
     p.pathAt = t;
     const foes = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && !d.block && d.z > p.z && d.z < p.z + 8);
@@ -2325,7 +2332,7 @@ function resolveContact(d, t, tc = t){
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
   if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
   // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
-  const noMove = !truck && !stiff && (mode === "body" || sinceJuke > 1.2);
+  const noMove = !truck && !stiff && sinceJuke > 1.2;
   if (noMove && !dive && Math.abs(dx) < 0.9 && nz > 0.5) hold = Math.max(hold, hot ? 0.7 : 0.85);
   hold = Math.max(hold, 0.25);                             // nobody is untackleable...
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
@@ -2837,7 +2844,7 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s.t < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.rec = []; g.recT = 0; g.bigPlay = false; g.replay = null; g.deadT = 0; g.hits = []; g.tackler = null; g.rail = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.rec = []; g.recT = 0; g.bigPlay = false; g.replay = null; g.deadT = 0; g.hits = []; g.tackler = null; g.rail = null; g.squared = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
@@ -3050,6 +3057,11 @@ function drawPlayers(c, t){
 }
 function drawCues(c, t, world2D){
   const g = game; if (!g) return;
+  // squared up: a pulsing ring on him, your cue to pick a move
+  if (g.phase === "live" && g.squared && g.playType === "run"){
+    const d = g.squared, q = proj(c, d.x, 1.1, d.z);
+    if (q){ cx.strokeStyle = `rgba(255,207,63,${0.6 + 0.35*Math.sin(t*16)})`; cx.lineWidth = Math.max(4, q.s*0.14); cx.beginPath(); cx.arc(q.x, q.y, q.s*1.5, 0, 7); cx.stroke(); }
+  }
   // the stiff arm cue: that edge of the screen flashes red with a hand while a tackler closes from the side
   if (g.phase === "live" && g.glance > 0.05 && g.playType === "run"){
     const sd = g.glanceSide, a = g.glance*(0.5 + 0.2*Math.sin(t*14)), w = Math.max(70, W*0.18), x0 = sd > 0 ? W : 0;
