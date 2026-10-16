@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16, new player models</p>
+    <p class="diag" id="buildStamp">Build: Oct 17, automatic lanes, male voices</p>
   </div>
 </div>
 
@@ -1020,18 +1020,22 @@ function bandDuck(){ if (!bandBus) return; const talk = boothTalking() || now() 
 // downloadable on iPhone and sound far more natural than the default.
 const NOVELTY = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/i;
 let voices = [], voice = null;
+// American men for both voices: the QB and the booth (known female voices sink to the bottom of the list)
+const MALE = /\b(aaron|alex|arthur|evan|fred|nathan|ralph|reed|rocko|eddy|grandpa|tom|junior|david|mark|guy|christopher|eric|roger|andrew|brian|davis|jason|tony|ryan|jacob|male)\b/i;
+const FEMALE = /\b(samantha|ava|allison|susan|victoria|karen|moira|tessa|zoe|nicky|kathy|serena|martha|fiona|veena|catherine|kate|zira|aria|jenny|michelle|sara|female|shelley|sandy|grandma|flo|google us english)\b/i;
 function voiceScore(v){
   let s = 0;
+  if (MALE.test(v.name) && !FEMALE.test(v.name)) s += 25; else if (FEMALE.test(v.name)) s -= 30;
   if (/premium/i.test(v.name)) s += 40; else if (/enhanced|neural|natural/i.test(v.name)) s += 30; else if (/google/i.test(v.name)) s += 15;
-  if (/^en[-_]US/i.test(v.lang)) s += 6; else if (/^en/i.test(v.lang)) s += 3;
-  if (/samantha|evan|nathan|zoe|ava|tom|aaron|nicky/i.test(v.name)) s += 2;
+  if (/^en[-_]US/i.test(v.lang)) s += 10; else if (/^en/i.test(v.lang)) s += 3;
+  if (/evan|nathan|tom|aaron|reed/i.test(v.name)) s += 2;
   if (v.localService) s += 1;
   return s;
 }
 function loadVoices(){
   if (!window.speechSynthesis) return;
   try{ voices = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang) && !NOVELTY.test(v.name)).sort((a, b) => voiceScore(b) - voiceScore(a)); }catch(e){ voices = []; }
-  let saved = null; try{ saved = localStorage.getItem("hhVoice"); }catch(e){}
+  let saved = null; try{ saved = localStorage.getItem("hhVoiceM"); }catch(e){}   // a new key: earlier picks may have been female voices
   voice = voices.find(v => v.voiceURI === saved) || voices[0] || null;
   const sel = $("voiceSel"); if (!sel || !voices.length) return;
   sel.innerHTML = voices.map(v => `<option value="${v.voiceURI.replace(/"/g, "&quot;")}">${v.name.replace(/</g, "")}</option>`).join("");
@@ -1053,7 +1057,7 @@ function say(text, force){
   speak(text, false, voiceBusy());     // important calls wait their turn instead of cutting anyone off
 }
 // the booth uses a different voice than the coach when the device has one, pitched up and quicker
-function boothVoice(){ return voices.find(v => v !== voice && voiceScore(v) >= voiceScore(voices[0]) - 12 && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
+function boothVoice(){ return voices.find(v => v !== voice && MALE.test(v.name) && !FEMALE.test(v.name) && /^en[-_]US/i.test(v.lang) && v.name.split(" ")[0] !== (voice && voice.name.split(" ")[0])) || voice; }
 /* ---------- voice output ----------
    One queue for both voices and both engines: a Studio voice clip when one is ready for the line, the
    device's speech otherwise. queue: wait for whatever is playing instead of cutting it off. */
@@ -1082,7 +1086,7 @@ function startLine(text, booth){
     if (booth){ boothUntil = now() + speechSecs(text); u.onend = u.onerror = () => { boothUntil = Math.min(boothUntil, now()); }; }
     if (v){ u.voice = v; u.lang = v.lang; }
     const natural = v && voiceScore(v) >= 30;
-    u.rate = booth ? (natural ? 1.12 : 1.2) : natural ? 1.05 : 1.12; u.pitch = booth ? 1.15 : 0.95;   // natural voices already speak briskly
+    u.rate = booth ? (natural ? 1.12 : 1.2) : natural ? 1.05 : 1.12; u.pitch = booth ? 1.05 : 0.9;   // natural voices already speak briskly
     speechSynthesis.speak(u);
   }catch(e){}
 }
@@ -1110,9 +1114,9 @@ function playClip(clip, booth){
 const Studio = (() => {
   const ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/";
   const PHON = "https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize";
-  const HF = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/";
-  const VOICE = {coach: "ryan/medium/en_US-ryan-medium.onnx", booth: "lessac/medium/en_US-lessac-medium.onnx"}, SPEED = {coach: 1.08, booth: 1.12};
-  const CACHE = "hh-studio-v2", MODELS = "hh-piper-v1";
+  const HF = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/";
+  const VOICE = {coach: "ryan/medium/en_US-ryan-medium.onnx", booth: "joe/medium/en_US-joe-medium.onnx"}, SPEED = {coach: 1.08, booth: 1.12};
+  const CACHE = "hh-studio-v3", MODELS = "hh-piper-v2";
   const clips = new Map(), wanted = new Map();
   let worker = null, state = "off", progress = 0, loadingWho = "coach", err = "", busyKey = null, made = 0, fails = 0, lastErr = "", genAt = 0, genSecs = [];
   const who = booth => booth ? "booth" : "coach";
@@ -1130,7 +1134,7 @@ const Studio = (() => {
   // the old Kokoro voice: its saved lines and its model files go, to free the space
   async function cleanOld(){
     try{
-      await caches.delete("hh-studio-v1");
+      for (const old of ["hh-studio-v1", "hh-studio-v2", "hh-piper-v1"]) await caches.delete(old);   // older voices (Kokoro, the female booth voice)
       if ((await caches.keys()).includes("transformers-cache")){
         const c = await caches.open("transformers-cache");
         for (const r of await c.keys()) if (/Kokoro/i.test(r.url)) await c.delete(r);
@@ -1509,17 +1513,13 @@ const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet u
 const WARM_MOVES = [
   {id: "jog", big: "Easy jog", small: "Jog in place, knees low. Your tired pace.", say: "Easy jog in place. Knees low.", secs: 2.6, cap: ["step"], capRound: "jog"},
   {id: "knees", big: "High knees!", small: "Run in place. Knees up to your waist.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
-  {id: "leanL", big: "Lean left", small: "Tip your shoulders left, like a cut. Then stand back up.", say: "Lean left.", secs: 1.6, cap: ["lean"]},
-  {id: "leanR", big: "Lean right", small: "Tip your shoulders right, like a cut. Then stand back up.", say: "Lean right.", secs: 1.6, cap: ["lean"]},
-  {id: "hopL", big: "Bound left", small: "One big hop to your left, then hop right back to the middle.", say: "Bound left, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "hopR", big: "Bound right", small: "One big hop to your right, then hop right back to the middle.", say: "Bound right, and back.", secs: 2.0, cap: ["hop"], once: true},
   {id: "squat", big: "Truck!", small: "Drop into a quick squat, like lowering your shoulder into him.", say: "Truck! Squat low.", secs: 2.0, cap: ["level"]},
   {id: "raiseL", big: "Stiff arm left", small: "Push your left arm straight out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
   {id: "raiseR", big: "Stiff arm right", small: "Push your right arm straight out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
   {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
   {id: "jump", big: "Jump!", small: "Jump and reach up, like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
-const MOVE_NAMES = {step: "high knees", lean: "lean", hop: "bound", level: "truck squat", raise: "arm raise", jump: "jump"};
+const MOVE_NAMES = {step: "high knees", level: "truck squat", raise: "arm raise", jump: "jump"};
 const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
 function warmPlan(){
   return [WARM_STAND, roundIntro(1, "Every move once."), ...WARM_MOVES.map(m => ({...m, round: 1})),
@@ -1706,7 +1706,6 @@ function pumpBody(){
     if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t, e.h);
-    else if (e.type === "hop" || e.type === "lean"){ input.juke = e.type === "lean" ? (e.side === "R" ? 1 : -1) : e.dir; input.jukeT = e.tEff; }   // a cut: lean or bound
     else if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
     else if (e.type === "raise"){
       if (game.playType === "pass"){   // the pass pro block is both arms out together
@@ -1906,15 +1905,15 @@ function spawnDefense(){
   add("LB", rand(-7, -4), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
   add("LB", rand(-1.5, 1.5), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.2);
   add("LB", rand(4, 7), rand(4.5, 5.5), 6.4 + d*0.8, 4.8, 0.32, 0.25);
-  add("DB", rand(-10, -6), rand(11, 14), 8.4 + d*0.6, 6, 0.26, 0.35);
-  add("DB", rand(6, 10), rand(11, 14), 8.4 + d*0.6, 6, 0.26, 0.35);
-  add("DB", -17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
-  add("DB", 17, rand(7, 9), 8.2 + d*0.5, 6.2, 0.24, 0.3);
+  add("DB", rand(-10, -6), rand(11, 14), 8.9 + d*0.6, 6, 0.24, 0.3);
+  add("DB", rand(6, 10), rand(11, 14), 8.9 + d*0.6, 6, 0.24, 0.3);
+  add("DB", -17, rand(7, 9), 8.7 + d*0.5, 6.2, 0.22, 0.25);
+  add("DB", 17, rand(7, 9), 8.7 + d*0.5, 6.2, 0.22, 0.25);
   // run blocking: linemen climb to the linebackers, who have to shed before they can pursue.
   // The one closest to the hole sheds last, so the hole is real.
   const lbs = D.filter(x => x.type === "LB").sort((a, b) => Math.abs(a.x - g.play.hole) - Math.abs(b.x - g.play.hole));
   if (g.playType !== "run") lbs.forEach((x, i) => x.blockedUntil = (i === 0 ? rand(1.0, 1.5) : rand(0.6, 1.1)) - d*0.25);   // runs use real blocks instead
-  else lbs.forEach(x => x.delay = rand(0.45, 0.7) - d*0.15);   // on runs, linebackers read the play before they fill
+  else lbs.forEach(x => x.delay = rand(0.35, 0.6) - d*0.15);   // on runs, linebackers read the play before they fill
   const front = g.front || "base", dbs = D.filter(x => x.type === "DB");
   if (front === "goal line"){
     // everyone packed in close: the line sheds sooner, linebackers fill fast, but there's no one deep
@@ -2057,7 +2056,7 @@ function makeBlockers(){
   if (rest.length > line.length){
     const back = rest.slice().sort((a, c) => s*(a.x - c.x))[0];   // farthest backside
     rest.splice(rest.indexOf(back), 1);
-    back.delay = (back.delay || 0) + 0.8; back.cutback = true;     // he reads cutback before he chases
+    back.delay = (back.delay || 0) + 0.6; back.cutback = true;     // he reads cutback before he chases
   }
   const free = new Set(line);
   for (const d of rest){
@@ -2145,6 +2144,29 @@ function openLane(){
     if (!best || room > best.room) best = {...L, room};
   }
   return best;
+}
+// Automatic running lanes. Behind the line: the lane where the blocks are winning (bang, bend, or bounce),
+// switching only for a clearly better one. Past the line: every 0.15 s, score a few spots left and right by
+// how far the nearest free tackler in the next 8 yards would be, and bend toward the best one. Your job is speed and power.
+function autoPath(g, p, dt, t){
+  if (p.z < 0.3 && !g.caught){
+    const want = g.lane ? g.lane.x : g.play.hole;
+    p.x += clamp(want - p.x, -1, 1)*dt*3.6;
+    return;
+  }
+  if (t - (p.pathAt || -9) > 0.3){
+    p.pathAt = t;
+    const foes = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && !d.block && d.z > p.z && d.z < p.z + 8);
+    let best = p.x, bs = -1e9;
+    for (let k = -2; k <= 2; k++){
+      const x = clamp(p.x + k*1.0, -24, 24);
+      let room = 8; for (const d of foes) room = Math.min(room, Math.hypot(d.x - x, (d.z - p.z)*0.7));
+      const sc = room - 0.25*Math.abs(k) - (Math.abs(x) > 21 ? (Math.abs(x) - 21)*2 : 0);
+      if (sc > bs){ bs = sc; best = x; }
+    }
+    p.pathX = best;
+  }
+  p.x += clamp((p.pathX ?? p.x) - p.x, -1, 1)*dt*1.8;   // a bend, not a sidestep
 }
 // fight for yards: a tackle near the line turns into a pile you can push with fast knees and a low shoulder
 function startPile(d, t){
@@ -2266,7 +2288,7 @@ function endPlay(kind, extra){
    for extra yards. A defender who came in hot overruns a juke; one who broke down is harder to miss.
    tc is when contact happened on screen; with camera delay the call is made LAT later. */
 const MASS = {DL: 1.4, LB: 1.15, COV: 1.15, DB: 0.9};
-const FORM = {DL: 0.9, LB: 0.85, COV: 0.85, DB: 0.78};      // tackle odds for a square, even-momentum hit
+const FORM = {DL: 0.9, LB: 0.9, COV: 0.9, DB: 0.86};      // tackle odds for a square, even-momentum hit
 const REACH = 1.0;                                        // how far a defender's arms reach, center to center
 // speed tiers (yards a second): flying (about 5 steps a second) runs through almost anyone; fast (about 3.4)
 // earns a fight for yards when you do go down. Standing around earns nothing.
@@ -2303,8 +2325,8 @@ function resolveContact(d, t, tc = t){
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
   if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
   // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
-  const noMove = !truck && !stiff && sinceJuke > 1.2;
-  if (noMove && !hot && !dive && Math.abs(dx) < 0.7 && nz > 0.6) hold = Math.max(hold, 0.8);
+  const noMove = !truck && !stiff && (mode === "body" || sinceJuke > 1.2);
+  if (noMove && !dive && Math.abs(dx) < 0.9 && nz > 0.5) hold = Math.max(hold, hot ? 0.7 : 0.85);
   hold = Math.max(hold, 0.25);                             // nobody is untackleable...
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
@@ -2386,7 +2408,7 @@ function updateLive(dt, t){
   if (g.blockers){
     updateBlockers(dt, t);
     // the read: where the blocks are winning, shown as a green arrow until you hit the line
-    if (p.z < 0.5 && !g.caught && -g.t >= 0.35 && -g.t - g.laneAt >= 0.25){ g.lane = openLane(); g.laneAt = -g.t; }
+    if (p.z < 0.5 && !g.caught && -g.t >= 0.35 && -g.t - g.laneAt >= 0.25){ const L = openLane(); if (!g.lane || L.k === g.lane.k || L.room > g.lane.room + 0.8) g.lane = L; else g.lane = {...g.lane, room: L.room}; g.laneAt = -g.t; }
     if (p.z >= 0.5) g.lane = null;
   }
   // speed from step cadence
@@ -2404,11 +2426,6 @@ function updateLive(dt, t){
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.78; sfx.whoosh();   // a real cut: about a step and a half, and it costs speed
-    // rails: before the line, a cut moves you to the next lane over that way (bang, bend, bounce); you follow it on your own
-    if (p.z < 0 && !g.caught && g.rail != null){
-      const next = playLanes(g.play).map(l => l.x).filter(x => input.juke*(x - g.rail) > 0.5).sort((a, b) => Math.abs(a - g.rail) - Math.abs(b - g.rail))[0];
-      g.rail = next ?? g.rail + input.juke*1.6;
-    }
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
@@ -2419,15 +2436,14 @@ function updateLive(dt, t){
   input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; input.stiffSide = 0;
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
-  // rails: before the line you follow your lane on your own, like following your blockers
-  if (g.rail == null) g.rail = g.play.hole;
-  if (p.z < 0 && !g.caught && t - p.lastJuke > 0.25) p.x += clamp(g.rail - p.x, -1, 1)*dt*3.6;
+  // the path finds itself: behind the line you follow the most open lane; past it you bend toward open grass
+  if (t - p.lastJuke > 0.25) autoPath(g, p, dt, t);
   // the stiff arm cue: a tackler closing from the side turns your head toward him
   const threat = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && d.state !== "contact" && !d.block && g.t <= -d.delay && d.z - p.z > 0.2 && d.z - p.z < 4 && Math.abs(d.x - p.x) > 0.5 && Math.abs(d.x - p.x) < 4.5)
     .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];
   const ahead = g.defenders.some(d => d !== threat && d.state !== "down" && d.state !== "resolved" && !d.block && d.z - p.z > 0 && d.z - p.z < 7 && Math.abs(d.x - p.x) < 2.5);
   const others = threat && g.defenders.filter(d => d !== threat && d.state !== "down" && d.state !== "resolved" && !d.block && Math.hypot(d.x - p.x, d.z - p.z) < 5).length;
-  if (threat && !ahead && !others && !g.pile){ g.glanceSide = Math.sign(threat.x - p.x); g.glance = Math.min(1, (g.glance || 0) + dt*5); }
+  if (threat && g.breakaway && !ahead && !others && !g.pile){ g.glanceSide = Math.sign(threat.x - p.x); g.glance = Math.min(1, (g.glance || 0) + dt*5); }
   else g.glance = Math.max(0, (g.glance || 0) - dt*3);
   const prevZ = p.z;
   p.z += p.speed*dt;
@@ -2516,6 +2532,7 @@ function updateRoute(dt, t){
   p.speed += clamp(clamp(sps*1.9, 0, 9.3) - p.speed, -5*dt, 6*dt);
   p.bob += dt*(2 + sps*2.2);
   // the break: a hop toward the called side near the cone
+  if (mode === "body" && !rt.screen && rt.cueAt != null && rt.broke == null && pl.dir !== 0 && t >= rt.cueAt + 0.15){ input.juke = pl.dir; input.jukeT = t; }   // body play: the break is automatic
   if (input.juke && t - p.lastJuke > 0.4){
     const jt = input.jukeT ?? t;
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = jt; sfx.whoosh();
@@ -3891,7 +3908,7 @@ if ($("studioOn").checked) Studio.start();
 $("booth").addEventListener("change", e => { try{ localStorage.setItem("hhBooth", e.target.value); }catch(err){} });
 $("voiceSel").addEventListener("change", e => {
   voice = voices.find(v => v.voiceURI === e.target.value) || voice;
-  try{ localStorage.setItem("hhVoice", voice.voiceURI); }catch(e){}
+  try{ localStorage.setItem("hhVoiceM", voice.voiceURI); }catch(e){}
   primeAudio(); say("Inside zone right. Hole is right.", true);
 });
 $("calibBack").addEventListener("click", () => {
