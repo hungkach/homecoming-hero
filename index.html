@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 16 PM, big play replays</p>
+    <p class="diag" id="buildStamp">Build: Oct 16, new player models</p>
   </div>
 </div>
 
@@ -3498,20 +3498,47 @@ const R3 = (() => {
 
   /* ---------- players ---------- */
   function buildMaterials(){
-    Object.assign(M, {home: lam(COL.home), away: lam(COL.away), pants: lam(COL.pants), awayPants: lam(0xd9d2c2), skin: lam(COL.skin), skin2: lam(COL.skinDark),
-      helmHome: lam(0xe8eef8), helmAway: lam(0x8e1c23), black: lam(0x151515), gold: lam(COL.gold), mask: lam(0xbfc3c9), sockAway: lam(0xf2e6d0),
+    // glossy helmets, matte jerseys: Phong gives the helmets a highlight; everything is two-sided so lathed parts never show holes
+    const ph = (color, shininess = 12, o = {}) => new T.MeshPhongMaterial(Object.assign({color, shininess, specular: 0x222222, side: T.DoubleSide}, o));
+    Object.assign(M, {home: ph(COL.home, 8), away: ph(COL.away, 8), pants: ph(COL.pants, 18), awayPants: ph(0xd9d2c2, 18), skin: ph(COL.skin, 20), skin2: ph(COL.skinDark, 20),
+      helmHome: ph(0xe8eef8, 90, {specular: 0x888888}), helmAway: ph(0x8e1c23, 90, {specular: 0x777777}), black: ph(0x151515, 40), gold: ph(COL.gold, 30), mask: ph(0xbfc3c9, 60, {specular: 0x999999}),
+      sockAway: ph(0xf2e6d0, 6), sockHome: ph(0xf4f4f4, 6), gloveHome: ph(0xf4f4f4, 10), gloveAway: ph(0x1b1b1b, 10), trimHome: ph(COL.home, 10), trimAway: ph(0x8e1c23, 10),
       shadow: new T.MeshBasicMaterial({color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false})});
+    const V2 = (r, y) => new T.Vector2(r, y);
+    // a smooth limb or body part turned on a lathe: [radius, height] pairs from bottom to top, squashed front to back by zs
+    const lathe = (pts, zs = 1, seg = 12) => { const g = new T.LatheGeometry(pts.map(([r, y]) => V2(r, y)), seg); g.scale(1, 1, zs); return g; };
+    const ball = (r, sx, sy, sz, x = 0, y = 0, z = 0) => { const g = new T.SphereGeometry(r, 14, 10); g.scale(sx, sy, sz); g.translate(x, y, z); return g; };
     const B = (w, h, d, dy = 0) => { const g = new T.BoxGeometry(w, h, d); g.translate(0, dy, 0); return g; };
-    const cap = (r, len, dy) => { const g = new T.CapsuleGeometry(r, len, 3, 8); g.translate(0, dy, 0); return g; };
-    const torso = new T.CylinderGeometry(0.31, 0.24, 0.58, 10); torso.scale(1, 1, 0.62); torso.translate(0, 0.29, 0);
-    const hips = new T.CylinderGeometry(0.25, 0.23, 0.3, 10); hips.scale(1, 1, 0.68);
-    const pads = new T.SphereGeometry(0.5, 14, 8); pads.scale(0.9, 0.34, 0.5);
-    Object.assign(G, {
-      hips, thigh: cap(0.115, 0.3, -0.25), shin: cap(0.085, 0.3, -0.21), shoe: B(0.18, 0.1, 0.32),
-      torso, pads, upper: cap(0.09, 0.2, -0.17), fore: cap(0.075, 0.2, -0.17),
-      neck: new T.CylinderGeometry(0.08, 0.09, 0.14, 8), helmet: new T.SphereGeometry(0.2, 14, 10), mask: B(0.28, 0.14, 0.05),
-      stripe: B(0.06, 0.03, 0.4), num: new T.PlaneGeometry(0.34, 0.34), shadow: new T.CircleGeometry(0.55, 16)
-    });
+    // several parts that share a material become one mesh (fewer draw calls on a phone)
+    const merge = list => {
+      const parts = list.map(g => (g.index ? g.toNonIndexed() : g)), out = new T.BufferGeometry();
+      for (const k of ["position", "normal"]){
+        const n = parts.reduce((a, g) => a + g.attributes[k].array.length, 0), arr = new Float32Array(n); let o = 0;
+        for (const g of parts){ arr.set(g.attributes[k].array, o); o += g.attributes[k].array.length; }
+        out.setAttribute(k, new T.BufferAttribute(arr, 3));
+      }
+      return out;
+    };
+    // facemask: three bars wrapped around the front, plus a center post
+    const bar = (y, r) => { const g = new T.TorusGeometry(r, 0.012, 5, 18, 2.1); g.rotateX(Math.PI/2); g.rotateY(Math.PI/2 - 1.05); g.translate(0, y, 0.02); return g; };
+    const post = new T.CylinderGeometry(0.011, 0.011, 0.13, 5); post.translate(0, -0.08, 0.215);
+    const mask = merge([bar(-0.02, 0.215), bar(-0.08, 0.21), bar(-0.135, 0.19), post]);
+    const stripe = new T.TorusGeometry(0.212, 0.03, 5, 20, Math.PI); stripe.rotateY(Math.PI/2); stripe.scale(1, 1.05, 1.12);
+    const shell = new T.SphereGeometry(0.21, 20, 14, 0, Math.PI*2, 0, Math.PI*0.64);
+    // the body: a V-shaped torso, shoulder pads that sit wide, tapered limbs with a little muscle
+    const torso = lathe([[0.22, 0], [0.25, 0.18], [0.31, 0.42], [0.31, 0.56], [0.16, 0.66]], 0.62);
+    const pads = merge([ball(0.42, 0.95, 0.32, 0.6, 0, 0.0, 0), ball(0.16, 1.1, 0.75, 1.15, -0.34, -0.03, 0), ball(0.16, 1.1, 0.75, 1.15, 0.34, -0.03, 0)]);   // the mesh sits at the shoulders
+    const hips = lathe([[0.22, -0.14], [0.25, 0.02], [0.23, 0.16]], 0.7);
+    const thigh = lathe([[0.085, -0.5], [0.105, -0.38], [0.13, -0.2], [0.135, -0.06], [0.12, 0.03]]);
+    const tStripe = B(0.025, 0.46, 0.05, -0.24); tStripe.translate(0.128, 0, 0);
+    const calf = merge([lathe([[0.058, -0.44], [0.07, -0.3], [0.094, -0.12], [0.086, 0.02]]), ball(0.075, 1, 0.7, 1, 0, 0, 0.03)]);   // with a knee
+    const shoe = merge([ball(0.1, 0.85, 0.55, 1.75, 0, -0.45, 0.06), B(0.15, 0.03, 0.3, -0.495)]);
+    const upper = merge([lathe([[0.083, -0.36], [0.098, -0.2], [0.112, -0.05], [0.11, 0.04]]), ball(0.085, 1, 1, 1, 0, -0.36, 0)]);   // sleeve over the bicep, an elbow
+    const fore = lathe([[0.05, -0.31], [0.066, -0.16], [0.074, -0.02]]);
+    const glove = ball(0.06, 1, 1.3, 0.8, 0, -0.37, 0.01);
+    const head = merge([new T.CylinderGeometry(0.075, 0.09, 0.15, 10), ball(0.13, 0.95, 1.1, 1, 0, 0.17, 0.03)]);   // neck and a face behind the mask
+    Object.assign(G, {hips, thigh, tStripe, shin: calf, shoe, torso, pads, upper, fore, glove, neck: head, helmet: shell, mask, stripe,
+      num: new T.PlaneGeometry(0.34, 0.34), shadow: new T.CircleGeometry(0.55, 16)});
   }
   function numMat(num, team){
     const key = team + num; if (numMats.has(key)) return numMats.get(key);
@@ -3529,23 +3556,23 @@ const R3 = (() => {
     for (const s of [-1, 1]){
       const hip = new T.Group(); hip.position.set(s*0.13, 1.0, 0); low.add(hip);
       const knee = new T.Group(); knee.position.y = -0.5; hip.add(knee);
-      const th = mk(G.thigh, M.pants), sh = mk(G.shin, M.home), shoe = mk(G.shoe, M.black, 0, -0.43, 0.05);
-      hip.add(th); knee.add(sh, shoe); f.legs.push({hip, knee, th, sh});
+      const th = mk(G.thigh, M.pants), st = mk(G.tStripe, M.trimHome), sh = mk(G.shin, M.home), shoe = mk(G.shoe, M.black);
+      st.scale.x = s; hip.add(th, st); knee.add(sh, shoe); f.legs.push({hip, knee, th, st, sh});
     }
     f.hips = mk(G.hips, M.pants); up.add(f.hips);
     f.torso = mk(G.torso, M.home); up.add(f.torso);
     f.pads = mk(G.pads, M.home, 0, 0.62, 0); up.add(f.pads);
-    f.numF = mk(G.num, M.gold, 0, 0.32, 0.18); f.numB = mk(G.num, M.gold, 0, 0.32, -0.18); f.numB.rotation.y = Math.PI; up.add(f.numF, f.numB);
+    f.numF = mk(G.num, M.gold, 0, 0.36, 0.195); f.numB = mk(G.num, M.gold, 0, 0.36, -0.195); f.numB.rotation.y = Math.PI; up.add(f.numF, f.numB);
     for (const s of [-1, 1]){
       const sh = new T.Group(); sh.position.set(s*0.45, 0.62, 0); up.add(sh);
       const el = new T.Group(); el.position.y = -0.36; sh.add(el);
-      const ua = mk(G.upper, M.home), fa = mk(G.fore, M.skin);
-      sh.add(ua); el.add(fa); f.arms.push({sh, el, ua, fa});
+      const ua = mk(G.upper, M.home), fa = mk(G.fore, M.skin), gl = mk(G.glove, M.gloveHome);
+      sh.add(ua); el.add(fa, gl); f.arms.push({sh, el, ua, fa, gl});
     }
-    f.neck = mk(G.neck, M.skin, 0, 0.76, 0); up.add(f.neck);
+    f.neck = mk(G.neck, M.skin, 0, 0.74, 0); up.add(f.neck);
     f.helm = mk(G.helmet, M.helmHome, 0, 0.93, 0); f.helm.scale.set(1, 1.05, 1.12); up.add(f.helm);
-    f.mask = mk(G.mask, M.mask, 0, 0.87, 0.2); up.add(f.mask);
-    f.stripe = mk(G.stripe, M.gold, 0, 1.13, 0); up.add(f.stripe);
+    f.mask = mk(G.mask, M.mask, 0, 0.93, 0.01); up.add(f.mask);
+    f.stripe = mk(G.stripe, M.gold, 0, 0.93, 0); up.add(f.stripe);
     root.visible = false; scene.add(root);
     return f;
   }
@@ -3553,10 +3580,10 @@ const R3 = (() => {
     if (f.team === team && f.num === num) return;
     const home = team === "home", j = home ? M.home : M.away;
     f.torso.material = f.pads.material = j;
-    for (const a of f.arms){ a.ua.material = j; a.fa.material = Math.random() < 0.5 ? M.skin : M.skin2; }
-    for (const l of f.legs){ l.th.material = home ? M.pants : M.awayPants; l.sh.material = home ? M.home : M.sockAway; }
+    for (const a of f.arms){ a.ua.material = j; a.fa.material = Math.random() < 0.5 ? M.skin : M.skin2; a.gl.material = home ? M.gloveHome : M.gloveAway; }
+    for (const l of f.legs){ l.th.material = home ? M.pants : M.awayPants; l.st.material = home ? M.trimHome : M.trimAway; l.sh.material = home ? M.home : M.sockAway; }
     f.hips.material = home ? M.pants : M.awayPants;
-    f.helm.material = home ? M.helmHome : M.helmAway; f.stripe.visible = home;
+    f.helm.material = home ? M.helmHome : M.helmAway; f.stripe.visible = true; f.stripe.material = home ? M.gold : M.black;
     f.neck.material = f.arms[0].fa.material;
     f.numF.material = f.numB.material = numMat(num, team);
     f.team = team; f.num = num;
