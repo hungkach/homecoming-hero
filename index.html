@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 17, bound juke is back</p>
+    <p class="diag" id="buildStamp">Build: Oct 17 PM, deep squats, replay calls</p>
   </div>
 </div>
 
@@ -1286,6 +1286,11 @@ const Studio = (() => {
 // The booth: a second, more excited voice with fitness jokes. It never talks over a play call:
 // lines wait in a queue until the coach voice is quiet, and stale ones are dropped.
 const CALLS = {
+  replay: ["Let's go to the replay. Watch the knees. That's not running, that's a sewing machine.",
+    "Here it is again. Look at the defense, waving like they're seeing him off at the airport.",
+    "Roll the tape! Somewhere a physical therapist just felt a disturbance.",
+    "One more time. Notice the form: arms pumping, knees high, dignity optional.",
+    "On the replay you can see the exact moment that linebacker reconsidered his career."],
   open: ["Welcome to homecoming! Tonight's forecast: sweat, with a hundred percent chance of burning legs.",
     "Good evening, football fans! Our running back is warmed up, stretched out, and slightly nervous about leg day.",
     "It's homecoming night, the crowd is loud, and somebody's quads are about to file a complaint."],
@@ -1354,6 +1359,11 @@ const CALLS = {
 // After dark (the default): the same moments, darker and bluer. Innuendo, mortality, bodily fluids, regret.
 // The joke is never the player's body or anyone's identity.
 const CALLS_DARK = {
+  replay: ["Let's see that again. Slow it down. Look at number 22 leave that defense like a bad first date.",
+    "Replay! That safety's still looking for his ankles. They were last seen in the end zone.",
+    "Roll it back. That linebacker's diving at air like it owes him money.",
+    "Here's the replay, and folks, the defense would like it noted they were technically present.",
+    "Watch the tackler on the left. He just aged ten years in two seconds. Same, buddy. Same."],
   open: ["Welcome to homecoming, where dreams come true and hamstrings go to die.",
     "Good evening. Tonight's game is brought to you by regret, ibuprofen, and whatever is about to leak out of our running back.",
     "The paramedics are here, the defibrillator is charged, and our running back signed the waiver without reading it. Let's play some football!",
@@ -1703,19 +1713,25 @@ function finishSetup(){
 }
 
 // turn body core events into game input; tEff already has the measured delay taken off
+const heldMoves = [];
+let lastHop = -9;
+function bodyMove(e){
+  if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
+  else if (e.type === "raise" && game.playType === "run"){ input.stiff = true; input.stiffT = e.tEff; input.stiffSide = e.side === "R" ? 1 : -1; }   // stiff arm toward that side
+}
 function pumpBody(){
+  const tn = now();
+  while (heldMoves.length && tn - heldMoves[0].t >= 0.25){ const e = heldMoves.shift(); if (game && Math.abs(e.t - lastHop) > 0.5) bodyMove(e); }
   for (const e of BodyCore.drain()){
     if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t, e.h);
-    else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; }   // a juke: bound out and back (a lean no longer counts)
-    else if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
-    else if (e.type === "raise"){
-      if (game.playType === "pass"){   // the pass pro block is both arms out together
-        handPunch[e.side] = e.tEff;
-        if (Math.abs(handPunch.L - handPunch.R) < 0.35){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
-      } else if (game.playType === "run"){ input.stiff = true; input.stiffT = e.tEff; input.stiffSide = e.side === "R" ? 1 : -1; }   // stiff arm toward that side
+    else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; lastHop = e.t; }   // a juke: bound out and back (a lean no longer counts)
+    else if (e.type === "raise" && game.playType === "pass"){   // the pass pro block is both arms out together
+      handPunch[e.side] = e.tEff;
+      if (Math.abs(handPunch.L - handPunch.R) < 0.35){ input.punch = true; input.punchT = Math.max(handPunch.L, handPunch.R); handPunch.L = handPunch.R = -9; }
     }
+    else if (e.type === "duck" || e.type === "level" || e.type === "raise"){ if (Math.abs(e.t - lastHop) > 0.5) heldMoves.push(e); }
     else if ((e.type === "jump" || e.type === "overhead") && game.playType === "route"){ input.punch = true; input.punchT = e.tEff; }   // the catch
     else if (e.type === "jump" && game.goalLine && game.playType === "run"){ input.dive = true; input.diveT = e.tEff; }   // the goal line dive
   }
@@ -2114,6 +2130,7 @@ function updateBlockers(dt, t){
       // a spare blocker picks up whoever comes free near him
       const c = g.defenders.filter(x => x.state !== "down" && x.state !== "resolved" && !x.block && x.type !== "DB" && Math.hypot(x.x - b.x, x.z - b.z) < 3.5).sort((a, c) => Math.hypot(a.x - b.x, a.z - b.z) - Math.hypot(c.x - b.x, c.z - b.z))[0];
       if (c){ b.target = c; b.drive = norm2({x: Math.sign(c.x - b.x) || 1, z: 1}); if (c.shedAfter == null) c.shedAfter = rand(1.4, 2.4); }
+      else if (b.z < 3.5){ const hx = clamp(p.x, b.x - 1.5, b.x + 1.5); b.x += clamp(hx - b.x, -1, 1)*dt*2; b.z += 4*dt; }   // climb up toward the linebackers
       continue;
     }
     if (!d || live < b.wait){ continue; }
@@ -2313,7 +2330,7 @@ function resolveContact(d, t, tc = t){
   const lowered = sinceShoulder < 0.5 || (sinceShoulder < 1.5 && p.z <= (p.lowerZ ?? -99));
   const truck = lowered && p.speed > 3;
   const stiffOnHim = !p.stiffSide || Math.abs(dx) < 0.5 || Math.sign(dx) === p.stiffSide;   // a body stiff arm has to go toward him
-  const held = mode === "body" && (Math.abs(dx) < 0.5 ? BodyCore.state.armOut.L || BodyCore.state.armOut.R : BodyCore.state.armOut[dx > 0 ? "R" : "L"]);
+  const held = mode === "body" && now() - lastHop > 0.6 && (Math.abs(dx) < 0.5 ? BodyCore.state.armOut.L || BodyCore.state.armOut.R : BodyCore.state.armOut[dx > 0 ? "R" : "L"]);
   const stiff = (sinceStiff < 0.8 && stiffOnHim) || held;
   const Pr = runIn*(truck ? 1.8 : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
   // the whiff: you're past his reach. A defender who came in hot can't redirect.
@@ -2436,7 +2453,7 @@ function updateLive(dt, t){
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
-  if (mode === "body" && BodyCore.state.stance > 0.55){ input.shoulder = true; input.shoulderT = t; }
+  if (mode === "body" && BodyCore.state.stance > 0.55 && now() - lastHop > 0.6){ input.shoulder = true; input.shoulderT = t; }
   if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.lowerZ = p.z + 2.5; p.dip = 1; }
   if (t - p.lastShoulder < 1.5 && p.z <= (p.lowerZ ?? -99)) p.dip = Math.max(p.dip, 0.8);
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
@@ -2601,14 +2618,14 @@ function updateRoute(dt, t){
     g.stats.targets++;
     if (rt.broke == null) return endRoute(rt.wrong ? "You broke the wrong way." : rt.cueAt == null ? "Too slow to the cone." : "You never made your break.");
     const sep = Math.hypot(cov.x - p.x, cov.z - p.z);
-    const hands = rt.handsT >= rt.arriveAt - 0.4 && rt.handsT <= rt.arriveAt + 0.2;
-    const chance = hands ? (sep > 1.6 ? 0.95 : sep > 0.9 ? 0.75 : 0.4) : (sep > 1.6 ? 0.2 : 0.08);
+    const hands = rt.screen ? rt.handsT >= rt.arriveAt - 0.9 && rt.handsT <= rt.arriveAt + 0.4 : rt.handsT >= rt.arriveAt - 0.4 && rt.handsT <= rt.arriveAt + 0.2;
+    const chance = rt.screen ? (hands ? 0.97 : 0.6) : hands ? (sep > 1.6 ? 0.95 : sep > 0.9 ? 0.75 : 0.4) : (sep > 1.6 ? 0.2 : 0.08);   // a screen is a soft lob
     if (Math.random() >= chance) return endRoute(!hands ? "Go up for it as it arrives." : "Broken up. He was right on you.");
     // caught: now it's a run
     g.caught = true; g.ball = null; g.playType = "run"; p.crossedLOS = true; cov.type = cov.was || "LB"; cov.state = "read";
     p.speed *= 0.4;   // the catch breaks your stride
     for (const o of g.defenders) o.delay = Math.min(o.delay, 0.15);   // everyone was already flowing to the ball
-    if (rt.screen) for (const o of g.defenders) if (o.type === "DL") o.delay = 1.2;   // the rush has to turn around
+    if (rt.screen) for (const o of g.defenders) o.delay = o.type === "DL" ? 1.2 : 0.5;   // the rush has to turn around; the rest read screen late
     banner("Caught it!", "Turn it upfield!", 1); say("Caught it!"); sfx.pads(); crowd(0.3, 1); announce("catch", {chance: 0.5, delay: 0.6});
   }
 }
@@ -2638,7 +2655,7 @@ function passPreSnap(dt){
   f.z = 3.9 + Math.sin(t*3.1)*0.25; f.crouch = 0.12 + 0.08*Math.sin(t*2.3);
 }
 function passStance(){
-  return mode === "body" ? (BodyCore.state.stance >= 0.25 && BodyCore.state.stance <= 1.3) : (touchStanceHeld() || input.keyStance);
+  return mode === "body" ? BodyCore.state.stance >= 0.25 : (touchStanceHeld() || input.keyStance);   // any depth counts; deeper is better
 }
 // Pass pro is a squat hold: sink into a quarter squat before he gets there (you step into his lane on your own),
 // then hold it while he bull-rushes. Holding 80 percent of the anchor is a clean pocket, half is a hurried throw,
@@ -2685,7 +2702,7 @@ function updatePass(dt, t){
   if (pp.setAt == null && pp.stanceNow) pp.setAt = t - L;
   if (r.state === "engaged"){
     const seenT = t - L;
-    if (seenT >= pp.contactAt && seenT <= pp.contactAt + pp.anchor){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt; }
+    if (seenT >= pp.contactAt && seenT <= pp.contactAt + pp.anchor){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt*(mode === "body" ? 1 + 0.5*clamp(BodyCore.state.stance - 1, 0, 1) : 1); }   // a deeper squat anchors faster
     // the bull rush: he drives you back while you're out of your stance
     r.z = p.z + 0.85; r.x = p.x + Math.sin(t*9)*0.08;
     if (!pp.stanceNow) p.z -= 0.8*dt;
@@ -2853,7 +2870,7 @@ function update(dt){
     g.t -= dt;
     // the broadcast replay of a big play: it starts a beat after the whistle and holds the next snap until it's done
     g.deadT = (g.deadT || 0) + dt;
-    if (g.bigPlay && !g.replay && g.deadT > 1.2){ g.bigPlay = false; g.replay = {f: g.rec, t: 0, dur: Math.min(6, g.rec.length/15)}; banner("", "", 0.01); }
+    if (g.bigPlay && !g.replay && g.deadT > 1.2){ g.bigPlay = false; g.replay = {f: g.rec, t: 0, dur: Math.min(6, g.rec.length/15)}; banner("", "", 0.01); announce("replay", {force: true, delay: 0.4}); }
     if (g.replay){ g.replay.t += dt*0.7; g.t = Math.max(g.t, 0.4); if (g.replay.t >= g.replay.dur) g.replay = null; }
     for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
     if (g.t <= 0) afterPlay();

@@ -15,7 +15,7 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | Goal line dive | Inside the 3: jump at the line to go over the top. Leave from the pile, not early; speed carries you farther | Swipe up (it replaces the stiff arm there) |
 | Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards | Swipe down |
 | Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out. On a breakaway, when one man closes from the side and nobody else is around, your view glances at him and that edge flashes red with a hand | Swipe up |
-| Pass pro: set and anchor | Quarter squat before the blitzer gets there, then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |
+| Pass pro: set and anchor | Squat before the blitzer gets there (any depth; deeper fills the bar faster), then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |
 | Pass pro: punch (bonus) | Both arms out to the sides as he hits: he's stunned, the hold is shorter, the pocket is cleaner | Tap |
 | Route: run it | High knees | Tap fast |
 | Route: break | Automatic at the cone; keep the knees up | Swipe toward the break |
@@ -38,7 +38,7 @@ More ways to get the ball in space:
 
 ## Replays
 
-A touchdown or a run of 20 yards or more gets a TV replay in the break before the next snap: a high angle behind you at 70 percent speed, with your blockers and their defense as they really moved (3D view only). It doubles as a few seconds of rest.
+A touchdown or a run of 20 yards or more gets a TV replay in the break before the next snap: a high angle behind you at 70 percent speed, with your blockers and their defense as they really moved (3D view only). The booth calls it. It doubles as a few seconds of rest.
 
 ## Pacing
 
