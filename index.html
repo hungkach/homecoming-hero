@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 18, beast mode, steady 3D</p>
+    <p class="diag" id="buildStamp">Build: Oct 18, effort pays</p>
   </div>
 </div>
 
@@ -1525,9 +1525,9 @@ const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet u
 const WARM_MOVES = [
   {id: "jog", big: "Easy jog", small: "Jog in place, knees low. Your tired pace.", say: "Easy jog in place. Knees low.", secs: 2.6, cap: ["step"], capRound: "jog"},
   {id: "knees", big: "High knees!", small: "Run in place. Knees up to your waist.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
-  {id: "hopL", big: "Juke left", small: "One big hop to your left, then hop right back to the middle.", say: "Juke left. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "hopR", big: "Juke right", small: "One big hop to your right, then hop right back to the middle.", say: "Juke right. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "squat", big: "Truck!", small: "Drop into a quick squat, like lowering your shoulder into him.", say: "Truck! Squat low.", secs: 2.0, cap: ["level"]},
+  {id: "hopL", big: "Juke left", small: "Hop left and right back. Bigger and faster jukes harder.", say: "Juke left. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
+  {id: "hopR", big: "Juke right", small: "Hop right and right back. Bigger and faster jukes harder.", say: "Juke right. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
+  {id: "squat", big: "Truck!", small: "Drop into a squat. The deeper you go, the harder you hit.", say: "Truck! Squat low.", secs: 2.0, cap: ["level"]},
   {id: "raiseL", big: "Stiff arm left", small: "Push your left arm straight out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
   {id: "raiseR", big: "Stiff arm right", small: "Push your right arm straight out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
   {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
@@ -2199,7 +2199,8 @@ function autoPath(g, p, dt, t){
 // fight for yards: a tackle near the line turns into a pile you can push with fast knees and a low shoulder
 function startPile(d, t){
   const g = game, p = g.p;
-  g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0};
+  const deep = mode === "body" ? (p.depth || 0) >= 1.0 : t - p.lastShoulder < 0.6;   // hit the pile low: churning alone can break you out
+  g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0, deep, power: deep && mode === "body" ? 0.3*clamp(p.depth - 1, 0, 1) : 0};
   p.speed = 0; sfx.hit(); g.shake = 0.5; crowd(0.3, 2.2);
   banner("Fight for yards!", "Keep those knees driving!", 1.6);
 }
@@ -2210,7 +2211,7 @@ function updatePile(dt, t){
   const drive = Math.max(0, sps - 1.5)*0.65*(low ? 1.4 : 1)*(1 - pl.t/pl.dur);   // about 3 yards for fast knees and a low shoulder
   p.z += drive*dt; pl.gained = p.z - pl.start;
   // beast mode: stay low, churn fast enough for long enough, and you burst out the other side of the pile, still running
-  if (low) pl.power = (pl.power || 0) + Math.max(0, sps - 3.2)*dt;   // only with the shoulder down (squat or duck) and the knees churning
+  if (low || pl.deep) pl.power = (pl.power || 0) + Math.max(0, sps - 3.2)*dt;   // the shoulder down now, or you hit the pile in a deep squat; and the knees churning
   if (pl.power > 1.1 && pl.t < pl.dur){
     if (pl.d){ pl.d.state = "down"; pl.d.vx = rand(-2, 2); pl.d.vz = 2; }
     g.pile = null; p.speed = 5.5; p.lastShoulder = -9; g.stats.broken++; sfx.pads(); g.shake = 0.6; crowd(0.4, 2);
@@ -2343,12 +2344,13 @@ function resolveContact(d, t, tc = t){
   const stiffOnHim = !p.stiffSide || Math.abs(dx) < 0.5 || Math.sign(dx) === p.stiffSide;   // a body stiff arm has to go toward him
   const held = mode === "body" && now() - lastHop > 0.6 && (Math.abs(dx) < 0.5 ? BodyCore.state.armOut.L || BodyCore.state.armOut.R : BodyCore.state.armOut[dx > 0 ? "R" : "L"]);
   const stiff = (sinceStiff < 0.8 && stiffOnHim) || held;
-  const Pr = runIn*(truck ? 1.8 : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
+  const tm = mode === "body" ? 1.4 + 0.5*clamp((p.depth || 0) - 0.5, 0, 1.2) : 1.8;   // body: a deeper squat trucks harder
+  const Pr = runIn*(truck ? tm : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
   // the whiff: you're past his reach. A defender who came in hot can't redirect.
   const hot = Math.hypot(d.vx, d.vz) > d.speed*0.85, reach = hot ? REACH*0.8 : REACH;
   const dive = Math.abs(dx) > reach;                        // just out of reach: he leaves his feet for an arm tackle
   // Ghost Reps' finish-drill rule: come in hot and a juke makes you miss; break down and you still get a hand on him
-  if (dive && dz > -0.3 && hot && (sinceJuke < 1.0 || Math.random() < 0.5)){
+  if (dive && dz > -0.3 && (hot || (sinceJuke < 0.9 && (p.jukeK || 0) > 0.35)) && (sinceJuke < 1.0 || Math.random() < 0.5)){
     d.state = "down"; d.vx = Math.sign(dx)*3; d.vz = d.vz*0.5; sfx.whoosh();
     if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); if (!announce("juke", {chance: 0.5})) say("Juked him!"); crowd(0.3, 1); }
     return;
@@ -2461,6 +2463,7 @@ function updateLive(dt, t){
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.9; sfx.whoosh();   // a real cut: about a step and a half, and it costs a little speed
+    if (mode === "body"){ p.jukeLat0 = BodyCore.state.lateral; p.jukeMax = 0; p.jukeDir = input.juke; p.jukeK = 0; }
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
@@ -2469,6 +2472,10 @@ function updateLive(dt, t){
   if (t - p.lastShoulder < 1.5 && p.z <= (p.lowerZ ?? -99)) p.dip = Math.max(p.dip, 0.8);
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
   input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; input.stiffSide = 0;
+  // effort pays: a bigger, faster bound makes a bigger cut (1.2 to 2.6 yards), and a big one fools even a tackler who's under control
+  if (mode === "body" && p.jukeT < 0.3 && p.jukeLat0 != null){ p.jukeMax = Math.max(p.jukeMax, Math.abs(BodyCore.state.lateral - p.jukeLat0)); p.jukeK = p.jukeMax; p.jukeTo = p.jukeFrom + p.jukeDir*clamp(1 + 3*p.jukeMax, 1.2, 2.6); }
+  // the deeper your squat, the harder your truck (and a deep one carries into the pile)
+  if (mode === "body") p.depth = Math.max(BodyCore.state.stance, (p.depth || 0) - dt*0.6);
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
   // the path finds itself: behind the line you follow the most open lane; past it you bend toward open grass
