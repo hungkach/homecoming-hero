@@ -2,6 +2,8 @@
 
 First-person running back fitness game played with your body in front of a phone or tablet camera. Mark (the owner) prototypes from his phone and plays at https://hungkach.github.io/homecoming-hero/ (GitHub Pages from `main`). Read README.md for controls, camera setups, and the startup sequence.
 
+Homecoming Hero is part of the body arcade (https://github.com/hungkach/body-arcade) and follows its philosophy: reward effort, stay accessible. A minimum honest rep (from the player's own warm-up, including the tired-pace jog) always works; more effort always pays more (knee height and cadence, bound size, squat depth); winning is never punished; precision the camera or a tired body can't give is automated. Check every new move against it. The arcade's other games run on rep-engine; this game keeps body core for now, and moving onto rep-engine is a later milestone there.
+
 ## Rules
 
 - Everything the game needs lives in `index.html`. No build step, no extra runtime files. Scripts load only from CDNs.

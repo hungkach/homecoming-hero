@@ -2,6 +2,8 @@
 
 A first-person running back game you play with your body. Prop a phone or tablet in front of you, take the handoff, and sprint, juke, truck, and stiff arm your way through a four-quarter homecoming game. On 3rd and long, you stay in to pick up the blitz or run a route out of the backfield.
 
+Part of the [body arcade](https://github.com/hungkach/body-arcade): effort is rewarded, and the whole experience stays accessible. A tired, honest rep always counts; higher knees, bigger bounds, and deeper squats pay more.
+
 Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that https link. Touch play works anywhere.
 
 ## Controls
