@@ -4,6 +4,17 @@ First-person running back fitness game played with your body in front of a phone
 
 Homecoming Hero is part of the body arcade (https://github.com/hungkach/body-arcade) and follows its philosophy: reward effort, stay accessible. A minimum honest rep (from the player's own warm-up, including the tired-pace jog) always works; more effort always pays more (knee height and cadence, bound size, squat depth); winning is never punished; precision the camera or a tired body can't give is automated. Check every new move against it. The arcade's other games run on rep-engine; this game keeps body core for now, and moving onto rep-engine is a later milestone there.
 
+## Design philosophy: honest reps
+
+Every rep counts, better reps count more, and the scoreboard doesn't lie. This game is the arcade's reference for it (full version in hungkach/body-arcade CLAUDE.md), and it wins over any habit here.
+
+- A minimum honest rep (tired, small, slow) always works, and more effort always pays more, smoothly, capped at the top. Knee height and cadence set speed, bound distance sets the juke, and squat depth sets truck power and the pass pro anchor.
+- Minimum reps keep you playing; quality reps win. Touchdowns, broken tackles, grades and records need real quality, never just time spent.
+- Summaries state what the player did in plain numbers; praise only what was earned (a personal best, quality held in the 4th quarter).
+- Fatigue is information: when quality drops, sub the player out for a series and say what changed. Never scold, never round up.
+- The bar is fitted to the player's own calibration and warm-up, not lowered.
+- Coaching tone, not slogans or preaching.
+
 ## Rules
 
 - Everything the game needs lives in `index.html`. No build step, no extra runtime files. Scripts load only from CDNs.
