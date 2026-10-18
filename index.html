@@ -65,6 +65,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .status{font:600 15px/1.4 var(--cond);color:var(--gold);min-height:1.4em}
 .err{color:#ff8a7a}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stats .rec{grid-column:1/-1;text-align:left}
 .stats div{background:rgba(255,255,255,.06);border-radius:10px;padding:10px;display:grid;gap:4px;min-width:0}
 .stats b{font:400 24px/1 var(--slab);font-variant-numeric:tabular-nums}
 .stats span{font:600 13px/1.2 var(--cond);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim)}
@@ -149,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 18, effort pays</p>
+    <p class="diag" id="buildStamp">Build: Oct 18, honest reps and records</p>
   </div>
 </div>
 
@@ -219,7 +220,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 
 <script>
 /* =====================================================================
-   body core v0.6  (start)
+   body core v0.7  (start)
    Shared camera body tracking for the body arcade games.
    Copy this whole <script> block into another game. It uses no game
    globals; the game reads BodyCore.state, drains BodyCore events, and
@@ -227,7 +228,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
    ===================================================================== */
 const BodyCore = (() => {
   "use strict";
-  const VERSION = "0.6";
+  const VERSION = "0.7";
   const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const TARGET_FPS = 30;
@@ -464,8 +465,8 @@ const BodyCore = (() => {
       // rise and lead grow with about the square of the thigh angle, so they're calibrated on a square-root scale
       {id: "rise", on: 0.16, off: 0.07, calib: true, sq: true, fn: F => F.knOK[s] ? F.kneeRise[s] : null},
       {id: "lead", on: 0.14, off: 0.05, calib: true, sq: true, fn: F => F.knOK[s] && F.knOK[o] ? F.kneeLead[s] : null}
-    ], {info: () => ({h: tr.lastPeak == null ? 1 : clamp(Math.sqrt(Math.max(0, tr.lastPeak)/stepRef), 0, 1.4)})});
-    tr.track = 1;   // the rise cue's peak while the knee is up
+    ], {info: () => ({h: tr.lastPeak == null ? 1 : clamp(Math.sqrt(Math.max(0, tr.lastPeak)/stepRef), 0, 1.4), pitch: tr.lastPitch ?? null})});
+    tr.track = 1;   // the rise cue's peak while the knee is up; pitch: the thigh angle's peak (degrees), absolute output
   }
   // hop, or a lateral bound: the whole body shifts sideways, feet included (a lean moves only the shoulders).
   // The move is the bound out from center; the step back to center right after it never counts,
@@ -558,6 +559,7 @@ const BodyCore = (() => {
     const vals = tr.cues.map(c => { const v = c.fn(F); return v == null || !isFinite(v) ? null : v; });
     tr.vals = vals;
     if (tr.track != null && tr.active && vals[tr.track] != null) tr.peak = Math.max(tr.peak || 0, vals[tr.track]);
+    if (tr.track != null && tr.active && vals[0] != null) tr.peakPitch = Math.max(tr.peakPitch || 0, vals[0]);
         capture(tr, vals);
 
     if (!base.ok) return;
@@ -573,7 +575,7 @@ const BodyCore = (() => {
       }
     } else if (off >= tr.need){
       tr.active = false;
-      if (tr.track != null){ if (tr.peak) tr.lastPeak = tr.peak; tr.peak = 0; }
+      if (tr.track != null){ if (tr.peak) tr.lastPeak = tr.peak; tr.peak = 0; if (tr.peakPitch) tr.lastPitch = tr.peakPitch; tr.peakPitch = 0; }
       if (tr.type === "overhead") state.overhead = false;
     }
   }
@@ -740,7 +742,7 @@ const BodyCore = (() => {
 
   };
 })();
-/* ===================== body core v0.6  (end) ===================== */
+/* ===================== body core v0.7  (end) ===================== */
 </script>
 <script>
 (() => {
@@ -1258,7 +1260,7 @@ const Studio = (() => {
     // the pre-snap lines first (the call, the front, the cadence), so no device voice cuts into the snap count
     for (const t of [...Object.values(FRONT_CALL).map(f => f[0]), ...MIKE_NUMS.map(n => `Mike ${n}!`), ...CADENCE_WORDS.flatMap(w => CADENCE_NUMS.map(n => `Down! Set! ${w} ${n}!`))]) want(t, false, -1);
     const coach = [...calls, "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
-      "Punt.", "The kick is good!", "No good.", "Homecoming win! Mustangs take it.", "Final score.",
+      "Punt.", "The kick is good!", "No good.", "Final score.",
       "Raiders march down and score a touchdown.", "Raiders kick a field goal.", "Mustangs defense forces a punt.", "Interception! The Mustangs defense takes it back."];
     const warm = [WARM_STAND, ...WARM_MOVES].map(m => m.say).concat(["Round 1.", "Round 2.", "One more round.", "Locked in.", "You're set.", "Step back", "Step closer", "Step left", "Step right",
       "Tilt the camera up", "Tilt the camera down", "Reach both arms up high", "Step in front of the camera", "Arm out on the beat. Four counts, then one arm out on every beat."]);
@@ -1287,153 +1289,106 @@ const Studio = (() => {
 /* ============ announcer ============ */
 // The booth: a second, more excited voice with fitness jokes. It never talks over a play call:
 // lines wait in a queue until the coach voice is quiet, and stale ones are dropped.
+// The booth calls the play and jokes about the world: the Raiders, the band, the refs, the crowd.
+// It never comments on the player's effort, body, or work rate, for or against.
 const CALLS = {
-  replay: ["Let's go to the replay. Watch the knees. That's not running, that's a sewing machine.",
-    "Here it is again. Look at the defense, waving like they're seeing him off at the airport.",
-    "Roll the tape! Somewhere a physical therapist just felt a disturbance.",
-    "One more time. Notice the form: arms pumping, knees high, dignity optional.",
+  replay: ["Let's go to the replay. Watch number 22 find the crease, and watch the safety find nothing.",
+    "Here it is again. Look at the defense waving like they're seeing him off at the airport.",
+    "Roll the tape. The linebacker on the left took a great angle to the wrong zip code.",
+    "One more time. The blocking up front, then daylight, then a very confused secondary.",
     "On the replay you can see the exact moment that linebacker reconsidered his career."],
-  open: ["Welcome to homecoming! Tonight's forecast: sweat, with a hundred percent chance of burning legs.",
-    "Good evening, football fans! Our running back is warmed up, stretched out, and slightly nervous about leg day.",
-    "It's homecoming night, the crowd is loud, and somebody's quads are about to file a complaint."],
-  huddle: ["Breathe in through the nose, folks. The Raiders are breathing through their mouths.",
-    "A reminder from the trainer's table: hydrate, or die-drate.",
-    "Fun fact: a running back does more squats in one game than the whole marching band.",
-    "The Raiders' coach just asked if our back does CrossFit. Nobody had to ask. It came up on its own.",
-    "Heart rate check: elevated. Spirits: also elevated.",
-    "If you're keeping score at home, keep your knees up at home too.",
-    "The concession stand reports record nacho sales. The running back reports record leg burn.",
-    "Somewhere a personal trainer is crying happy tears."],
-  third: ["Third and long. This is where the core work pays off.",
-    "Third down! Time to earn that post-game pizza.",
-    "Big third down. The trainer says this one counts as a full set."],
-  bigRun: ["Look at those knees! Somebody call a cardiologist, in a good way!",
-    "Our back is running like the ice cream truck just turned the corner!",
-    "That's not a run, that's an interval session with a scoreboard!",
-    "Knees up, chest up, ratings up!",
-    "Somebody check the treadmill, because that back just broke it!"],
-  td: ["Touchdown! Six points and roughly twelve calories!",
-    "Touchdown! Somebody get our back a protein shake!",
-    "Into the end zone! That's what we call a finisher, folks!",
-    "The legs will feel that one tomorrow, and the scoreboard feels it tonight!",
-    "Touchdown! Rest is earned, and that was earned!"],
-  juke: ["Ankles broken, hamstrings activated!",
-    "Left that defender doing lunges!",
-    "Juke! That linebacker needs a better warm-up routine.",
-    "Side shuffle! That's agility ladder money right there!"],
-  truck: ["Trucked! That's what squats are for, folks!",
-    "Leg day pays off! Right through him!",
-    "Lowered the shoulder like a deadlift lockout!"],
-  stiff: ["Stiff arm! That's a perfect push-up, just sideways!",
-    "Get off me! The stiff arm is the official handshake of homecoming.",
-    "Stiff arm! Somebody's been doing their presses."],
-  stuffed: ["Stuffed! The knees need to get up, the knees need to get up!",
-    "Stopped cold. Like my motivation on a Monday.",
-    "No gain. Even the mascot's doing more cardio than that.",
-    "Hit at the line. The legs said yes, the hole said no.",
-    "Stuffed! Back to the huddle for some deep breathing.",
-    "Nothing there. That's a rest set, and rest sets are over."],
-  slow: ["Those knees are moving like they're paying rent by the step!",
-    "Pick 'em up! The water break comes after the touchdown!",
-    "Let's go! My grandma does high knees faster, and she's on a recumbent bike!"],
-  fast: ["Look at that turnover! Knees like a sewing machine!",
-    "That cadence is ridiculous! The Fitbit just asked for a timeout!",
-    "Pistons! The knees are pistons!"],
-  first: ["First down! Move the chains, move the heart rate!",
-    "Moving the sticks! And the glutes!"],
-  sack: ["Sacked! Lower stance next time. Think quarter squat, not quarter pounder.",
-    "Sack! The quarterback would like a word, and maybe a chiropractor.",
-    "Ooh, he got home. Sit lower, get your arms out earlier!"],
-  clean: ["Clean pocket! That block was a wall sit with attitude!",
-    "What a pickup! The quarterback could have read a novel back there!"],
-  catch: ["Soft hands, strong core!", "Caught it in stride! Now turn on the afterburners!"],
-  drop: ["Dropped! Hands out early, like catching groceries off the top shelf.",
-    "Incomplete. The ball was there, the hands were on a coffee break."],
-  oppScore: ["Raiders score. Use that anger. Anger burns calories.",
-    "The Raiders put points up. Answer with your knees!"],
-  half: ["Halftime! The band is tired just from watching that workout.",
-    "Halftime. Get some water, shake out the legs, and do not sit down for too long."],
-  win: ["Ballgame! Mustangs win, and somebody's going to feel this tomorrow!",
-    "That's the final! A homecoming win, and a personal best on the stairs tomorrow morning."],
-  loss: ["Tough loss. But the real win is the muscle soreness you'll have tomorrow.",
-    "Final score. Not the result we wanted, but those legs got stronger tonight."]
+  open: ["Welcome to homecoming! The band is tuned, the nachos are hot, and the Raiders brought their own cheerleaders, all four of them.",
+    "Good evening, football fans! Clear skies, a full house, and a Raiders defense that ranks first in the league in confidence.",
+    "It's homecoming night. The crowd is loud, the field is fresh, and the mascot has already lost his head twice."],
+  huddle: ["The Raiders' defensive coordinator is drawing on a whiteboard. He's drawing a sad face.",
+    "Fun fact: the Mustangs' fight song was written by a tuba player who lost a bet.",
+    "The concession stand reports record nacho sales. Section B reports record cheese on shirts.",
+    "The Raiders' coach just asked the ref for a timeout. The ref said he's not his mom.",
+    "Somewhere in the stands, a dad is explaining this play wrong to his whole row.",
+    "The drum major just high-fived the mascot. Morale is high."],
+  third: ["Third and long. Everybody in the stadium knows it's a big one, including the hot dog guy.",
+    "Third down. The Raiders are showing blitz, or they're just standing very close together.",
+    "Third and long. The Raiders' sideline is reading the play sheet upside down."],
+  bigRun: ["He's loose! The Raiders' secondary is now officially a search party!",
+    "Daylight! The only thing chasing him now is the band!",
+    "Into the open field! The safety took an angle to next Tuesday!",
+    "Breakaway! The Raiders are running like they forgot something at home!"],
+  td: ["Touchdown Mustangs! The band is playing and the Raiders are pointing at each other!",
+    "Six points! The Raiders' coach just threw his clipboard into the Gatorade!",
+    "He's in! Somebody tell the Raiders' secondary they can stop running now!"],
+  juke: ["Juked! That defender's still tackling the spot where he used to be!",
+    "Left him grabbing air! The air would like to file a complaint!",
+    "What a cut! The linebacker went left, his ankles went right!"],
+  truck: ["Trucked! Right through the linebacker and out the other side!",
+    "He ran him over! Somebody get that defender a map back to the huddle!",
+    "Lowered the shoulder and moved the pile! The Raiders felt that one in the bleachers!"],
+  stiff: ["Stiff arm! That defender just got sent back to the waiting room!",
+    "Stiff arm! Moved him like a lawn chair in a windstorm!",
+    "Stiff arm! Personal space, enforced!"],
+  stuffed: ["Stuffed at the line. The Raiders' front got there first.",
+    "No gain. The hole closed before anybody could get there.",
+    "Hit at the line. The Raiders guessed right on that one.",
+    "Stopped short. The Raiders' tackle is pretending that didn't hurt."],
+  first: ["First down! Move the chains!", "First down Mustangs! The chain gang finally gets to move.",
+    "First down, and the Raiders' coach wants a measurement. The measurement says no."],
+  sack: ["Sacked. The blitzer got there first.", "Sack. The Raiders sent one more than the Mustangs could block.",
+    "Down goes the quarterback. He'll be checking the film for who missed that."],
+  clean: ["Clean pocket! The quarterback had time to order a pizza!", "All day to throw! The blitzer bounced right off!",
+    "Picked up the blitz, and the quarterback found his man!"],
+  catch: ["Caught it! Now he's got room!", "Hauled it in! Turn it upfield!"],
+  drop: ["Off the hands. The ball hit the turf.", "Incomplete. That one got away.", "Dropped. The ball was right there."],
+  oppScore: ["Raiders score. The band responds by playing louder.", "The Raiders put points up. The Mustangs get the ball back."],
+  half: ["Halftime! The band takes the field, and the tuba section looks ready.", "Halftime. The marching band is about to attempt something ambitious."],
+  win: ["Ballgame! Mustangs win the homecoming game!", "That's the final! The Mustangs take it, and the Raiders take the long bus ride home."],
+  loss: ["Final score. The Raiders take this one.", "That's the game. The Raiders win it, and the band plays anyway."]
 };
-// After dark (the default): the same moments, darker and bluer. Innuendo, mortality, bodily fluids, regret.
-// The joke is never the player's body or anyone's identity.
+// after dark: bluer, still never about the player
 const CALLS_DARK = {
-  replay: ["Let's see that again. Slow it down. Look at number 22 leave that defense like a bad first date.",
+  replay: ["Let's see that again. Slow it down. Watch number 22 leave that defense like a bad first date.",
     "Replay! That safety's still looking for his ankles. They were last seen in the end zone.",
     "Roll it back. That linebacker's diving at air like it owes him money.",
     "Here's the replay, and folks, the defense would like it noted they were technically present.",
-    "Watch the tackler on the left. He just aged ten years in two seconds. Same, buddy. Same."],
-  open: ["Welcome to homecoming, where dreams come true and hamstrings go to die.",
-    "Good evening. Tonight's game is brought to you by regret, ibuprofen, and whatever is about to leak out of our running back.",
-    "The paramedics are here, the defibrillator is charged, and our running back signed the waiver without reading it. Let's play some football!",
-    "Welcome, everybody. If you're new here, the safe word is touchdown."],
-  huddle: ["Our running back is sweating like a sinner in church.",
-    "Breathe in through the nose, out through whatever still works.",
-    "That's the hardest anybody in this stadium has breathed since prom night.",
-    "The trainer says that noise is normal. The trainer has been wrong before. Ask his ex-wife.",
-    "That's not sweat, folks. That's every excuse you ever made, leaving the building.",
-    "Fun fact: the human body is sixty percent water. Give it ten more plays.",
-    "Somewhere, a treadmill is laughing at all of us.",
-    "Our back is breathing like an obscene phone call.",
-    "The concession stand is out of nachos and the medical tent is out of hope."],
-  third: ["Third and long. That's what she said.",
-    "Third down. Squeeze everything. Glutes, core, the armrest of life.",
-    "Third and long. The legs say no. The scoreboard says shut up, legs.",
-    "Third down, folks. This is where boys become men and men become sore."],
-  bigRun: ["Look at that! Running like an ex just showed up with a lawyer!",
-    "Go! Go! Death is chasing you, and death skipped leg day!",
-    "Running like there's free wings at the end zone and a bar tab at the forty!",
-    "Those knees are pumping harder than a teenager's search history!",
-    "Fastest thing in this stadium since the halftime show's wardrobe malfunction!"],
+    "Watch the tackler on the left. He just aged ten years in two seconds."],
+  open: ["Welcome to homecoming, where the beer is warm, the hot dogs are suspicious, and the Raiders' defense is worse than both.",
+    "Good evening. Tonight's game is brought to you by bad decisions, and the Raiders made all of theirs before kickoff.",
+    "The paramedics are here, the refs are blind, and the Raiders brought a playbook they found in a dumpster. Let's play some football!"],
+  huddle: ["The Raiders' defensive coordinator looks like he's about to update his dating profile.",
+    "Somebody in section C just proposed. She said maybe. That's the Raiders' secondary in a nutshell.",
+    "The Raiders' linebacker has a tattoo of his own name. In case he forgets it.",
+    "The ref just picked up a flag, looked at it, and put it back in his pocket like a guilty man.",
+    "The mascot is three beers deep and he's still got better coverage than the Raiders.",
+    "The Raiders' coach is chewing his gum like it owes him alimony."],
+  third: ["Third and long. That's what she said.", "Third down, and the Raiders are blitzing like it's last call.",
+    "Third and long. The Raiders' safety is standing so deep he's technically in the parking lot."],
+  bigRun: ["He's gone! The Raiders' secondary is chasing him like an ex with a lawyer!",
+    "Breakaway! That defense is getting left like a bad tip!",
+    "Daylight! The safety took an angle so bad it should be illegal in three states!",
+    "Into the open! The Raiders are running like the cops just showed up!"],
   td: ["Touchdown! Somebody light a cigarette, because that was intimate!",
-    "Touchdown! Spike it like your blood pressure!",
-    "Six points! When the obituary runs, it'll say they died doing what they loved: wheezing!",
-    "Touchdown! That's the most anyone has scored in this town all year!",
-    "Touchdown! Hug a stranger! Actually don't, you're moist!"],
-  juke: ["Juked so hard the defender's ancestors felt it!",
-    "Ankles: deceased. The funeral is Tuesday. Closed casket.",
-    "That linebacker got left like a voicemail from Mom.",
-    "Juke! That defender's going to need therapy and a new hip."],
-  truck: ["Trucked! Somebody call his mother, and maybe a priest!",
-    "Ran him over like a raccoon on the interstate!",
-    "Trucked! That's going on his tombstone, right under 'beloved'!"],
-  stiff: ["Stiff arm! Stiffest thing in this stadium, and I've seen the concession pretzels.",
-    "Get off me! The stiff arm: also my approach to dating.",
-    "Stiff arm to the face! That's a restraining order with extra steps."],
-  stuffed: ["Stuffed! Like a Thanksgiving turkey, and just as sweaty.",
-    "The hole closed faster than my gym membership.",
-    "Stopped cold. That's the hole saying it's not you, it's me. It's you.",
-    "No gain. Even the cheerleaders look disappointed, and they're paid to lie.",
-    "Nothing there. Like my retirement account."],
-  slow: ["Pick those knees up! The defense is coming, and so is cardiac arrest!",
-    "Slowest knees I've seen outside a retirement home pool party!",
-    "Move! You're running like your pants are full of regret!",
-    "Faster! The grim reaper is jogging, and he's gaining!"],
-  fast: ["Look at those knees! Pumping like a frat house keg!",
-    "That's the most action those knees have seen in years!",
-    "The heart rate monitor just filed a complaint with HR!"],
-  first: ["First down! The first thing that's gone right all week!",
-    "Move the chains! Tighter than my jeans after Thanksgiving!"],
-  sack: ["Sacked! The quarterback is going to feel that in his will.",
-    "Sack! The quarterback saw a bright light and his dead grandmother.",
-    "Sacked so hard his fantasy owners felt it."],
-  clean: ["Clean pocket! Cleaner than anything in the locker room showers.",
-    "What a block! The quarterback could've ordered dinner back there and tipped."],
-  catch: ["Soft hands! I'd let those hands do my taxes.",
-    "Caught it! Clutching that ball like the last donut at the office!"],
-  drop: ["Dropped it! The ball was there. The ball was always there. Like your problems.",
-    "Dropped! Butterfingers. Butter everything, really."],
-  oppScore: ["Raiders score. Use that anger. Anger burns calories. So does crying.",
-    "The Raiders score, and somewhere their coach is smiling. Terrifying. Nobody's seen his teeth since 1998."],
-  half: ["Halftime! Hydrate, stretch, and tell your loved ones where the will is.",
-    "Halftime. Somewhere in the band, a tuba player is sweating less than you."],
-  win: ["Ballgame! Mustangs win! Tomorrow you'll need help getting off the toilet, but tonight you're a legend!",
-    "That's the final! You won, and your knees have filed for divorce."],
-  loss: ["Tough loss. The good news: the soreness tomorrow won't care who won.",
-    "Final score. You lost the game but found muscles you didn't know you had. They hate you."]
+    "Six! The Raiders' secondary just got exposed harder than a senator's browser history!",
+    "He's in! The Raiders' coach is staring at the sky asking for a refund!"],
+  juke: ["Juked so hard the defender's ancestors felt it!", "He left that linebacker on read!", "Juke! That defender just got ghosted on live television!"],
+  truck: ["Trucked! Somebody call his mother, and maybe a priest!", "Ran him over! That linebacker is going to need dental records to identify himself!",
+    "Bulldozed! Right through him like a drunk uncle through a wedding cake!"],
+  stiff: ["Stiff arm! Stiffest thing in this stadium, and I've seen the concession pretzels.", "Stiff arm! That's a restraining order with a hand on it!",
+    "Stiff arm! Shoved him back into last week!"],
+  stuffed: ["Stuffed! Like a Thanksgiving turkey.", "The hole closed faster than a bar at two in the morning.",
+    "No gain. The Raiders' front got there like they had a reservation.", "Stopped at the line. The Raiders guessed right, and they'll be insufferable about it."],
+  first: ["First down! The first thing that's gone right all week!", "Move the chains! The chain gang is three beers deep and thrilled.",
+    "First down, and the Raiders' coach is arguing with a man in stripes he cannot afford to annoy."],
+  sack: ["Sacked! The quarterback is going to feel that in his will.", "Sack. The Raiders sent the whole family reunion.",
+    "Down goes the quarterback. Somebody check if he's still in the group chat."],
+  clean: ["Clean pocket! Cleaner than anything in the locker room showers.", "The blitzer bounced off like a drunk off a bouncer!",
+    "All the time in the world! The quarterback could have filed his taxes back there!"],
+  catch: ["Soft hands! I'd let those hands do my taxes.", "Caught it! Now the Raiders have to tackle somebody, which is not their strength."],
+  drop: ["Dropped it! The ball was there. The ball was always there. Like your problems.", "Off the hands, and onto the turf like a phone in a bar.",
+    "Incomplete. That ball is now in witness protection."],
+  oppScore: ["Raiders score. Their fans are celebrating like they've never seen it before. Because they haven't.",
+    "Raiders put points up. Their kicker celebrated like he paid his child support."],
+  half: ["Halftime! The drum major has clearly been drinking, and honestly, good for him.", "Halftime. Somewhere in the band, a tuba player is pretending he isn't hammered."],
+  win: ["Ballgame! Mustangs win! Somebody tell the Raiders the bus leaves in five minutes and it isn't waiting.",
+    "That's the final! The Mustangs win, and the Raiders' coach is updating his resume in the parking lot."],
+  loss: ["Final. The Raiders win it, and they're going to be unbearable on social media.", "That's the game. Raiders win. The refs will be accepting thank you cards at the gate."]
 };
 const callBags = {}, annQ = [];
 let annLast = -99;
@@ -1455,7 +1410,7 @@ function announce(kind, o = {}){
 // The booth talks in the gaps: after the whistle, in the huddle once the play call is done, and during a
 // run for the quick reactions. A line only starts if it can finish before the next call: in the huddle the
 // snap count waits up to a second and a half for it (3 at most), and it never starts during the count. Pre-snap chatter that doesn't fit is dropped.
-const LIVE_OK = new Set(["slow", "fast", "juke", "truck", "stiff", "catch"]);
+const LIVE_OK = new Set(["juke", "truck", "stiff", "catch"]);
 function announcerTick(){
   if (!annQ.length) return;
   const t = now(), g = game, q = annQ[0], secs = speechSecs(q.text);
@@ -1470,8 +1425,12 @@ function announcerTick(){
 /* ============ input: touch / keyboard ============ */
 let mode = "touch";   // "touch" or "body"
 const input = {steps:[], juke:0, shoulder:false, stiff:false, punch:false, keyStance:false, jukeT:null, shoulderT:null, stiffT:null, punchT:null};
-// a step's worth: touch taps count 1; in body play a higher knee counts more (0.75 for a low lift up to 1.15)
-function addStep(t, h){ input.steps.push({t, w: h == null ? 1 : clamp(0.6 + 0.4*h, 0.75, 1.15)}); if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); } }
+// a step's worth: touch taps count 1; in body play a higher knee counts more, by the thigh angle itself
+// (absolute output, never scaled to the player's own best): 30 degrees or less counts 0.75, 70 or more counts 1.15
+function addStep(t, h, pitch){
+  input.steps.push({t, w: pitch == null ? 1 : clamp(0.75 + (pitch - 30)/100, 0.75, 1.15)});
+  if (game && game.phase === "live"){ game.stats.steps++; sfx.step(); if (pitch != null) noteBest("knee", pitch); }
+}
 // pointers are tracked one by one so pass pro can hold a stance with one thumb and punch with the other
 const pointers = new Map();
 cv.addEventListener("pointerdown", e => { pointers.set(e.pointerId, {x: e.clientX, y: e.clientY, t: now(), moved: false}); });
@@ -1727,7 +1686,7 @@ function pumpBody(){
   for (const e of BodyCore.drain()){
     if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
     if (!game || game.phase === "over" || paused) continue;
-    if (e.type === "step") addStep(e.t, e.h);
+    if (e.type === "step") addStep(e.t, e.h, e.pitch);
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; lastHop = e.t; }   // a juke: bound out and back (a lean no longer counts)
     else if (e.type === "raise" && game.playType === "pass"){   // the pass pro block is both arms out together
       handPunch[e.side] = e.tEff;
@@ -1747,7 +1706,7 @@ function newGame(){
   game = {phase:"huddle", t:0, q:1, clock:QUARTER_SECONDS, dur: minutes*60, realT: 0, home:0, away:0, down:1, toGo:10, ballOn:75,
     play:PLAYS[0], defenders:[], result:null, oppText:"", firstPlay:true,
     p:{x:0, z:-5, speed:0, bob:0, jukeT:9, jukeFrom:0, jukeTo:0, lastJuke:-9, lastShoulder:-9, lastStiff:-9, xHist:[], dip:0, stiffAnim:0, crossedLOS:false, stall:0},
-    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0, rests:0, eased:0},
+    stats:{carries:0, yards:0, long:0, tds:0, firstDowns:0, broken:0, jukes:0, trucks:0, stiffs:0, steps:0, work:0, passPro:0, pickups:0, clean:0, sacks:0, targets:0, catches:0, recYards:0, rests:0, sprint:0, hurried:0},
     flash:0, shake:0};
   startHuddle(true);
 }
@@ -1812,8 +1771,6 @@ function pacing(g, newDrive){
   if (r && !r.counted){
     r.counted = true; (g.recent ||= []).push(gain); if (g.recent.length > 4) g.recent.shift();
     const avg = g.recent.reduce((a, x) => a + x, 0)/g.recent.length;
-    if (gain >= 8) g.ease = Math.max(0, (g.ease || 0) - 0.5);
-    else if (g.recent.length >= 3 && avg < 3.5) g.ease = Math.min(1, (g.ease || 0) + 0.25);
   }
 }
 // 3rd and long gets a big card in the huddle: what the play is and the three moves, in order
@@ -1956,10 +1913,6 @@ function spawnDefense(){
     // one linebacker shoots a gap at the snap: nobody blocks him, but if you hit the other gap he's out of the play
     const b = lbs[Math.floor(Math.random()*lbs.length)]; b.blockedUntil = 0; b.delay = 0; b.z = 3; b.speed += 0.6;
   }
-  // rubber band (see pacing): after a run of stuffs, they read a beat later and run a step slower
-  const e = g.ease || 0;
-  if (e > 0) g.stats.eased++;
-  if (e > 0) for (const x of D){ x.speed *= 1 - 0.06*e; if (x.type === "LB") x.delay = (x.delay || 0) + 0.15*e; if (x.blockedUntil) x.blockedUntil += 0.15*e; }
   // linebackers wear a few fixed numbers (the QB's "Mike 52!" call is then a line the Studio voice already has)
   D.filter(x => x.type === "LB").forEach((x, i) => x.num = MIKE_NUMS[(i + g.down + g.q) % MIKE_NUMS.length]);
   // goal line: defenders can't line up past the end zone
@@ -2199,8 +2152,8 @@ function autoPath(g, p, dt, t){
 // fight for yards: a tackle near the line turns into a pile you can push with fast knees and a low shoulder
 function startPile(d, t){
   const g = game, p = g.p;
-  const deep = mode === "body" ? (p.depth || 0) >= 1.0 : t - p.lastShoulder < 0.6;   // hit the pile low: churning alone can break you out
-  g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0, deep, power: deep && mode === "body" ? 0.3*clamp(p.depth - 1, 0, 1) : 0};
+  const deep = mode === "body" ? (p.depth || 0) >= 0.35 : t - p.lastShoulder < 0.6;   // hit the pile low (hip drop of 0.35 torso lengths): churning alone can break you out
+  g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0, deep, power: deep && mode === "body" ? 0.3*clamp((p.depth - 0.35)/0.2, 0, 1) : 0};
   p.speed = 0; sfx.hit(); g.shake = 0.5; crowd(0.3, 2.2);
   banner("Fight for yards!", "Keep those knees driving!", 1.6);
 }
@@ -2344,7 +2297,7 @@ function resolveContact(d, t, tc = t){
   const stiffOnHim = !p.stiffSide || Math.abs(dx) < 0.5 || Math.sign(dx) === p.stiffSide;   // a body stiff arm has to go toward him
   const held = mode === "body" && now() - lastHop > 0.6 && (Math.abs(dx) < 0.5 ? BodyCore.state.armOut.L || BodyCore.state.armOut.R : BodyCore.state.armOut[dx > 0 ? "R" : "L"]);
   const stiff = (sinceStiff < 0.8 && stiffOnHim) || held;
-  const tm = mode === "body" ? 1.4 + 0.5*clamp((p.depth || 0) - 0.5, 0, 1.2) : 1.8;   // body: a deeper squat trucks harder
+  const tm = mode === "body" ? 1.4 + 0.5*clamp(((p.depth || 0) - 0.15)/0.3, 0, 1.2) : 1.8;   // body: a deeper squat trucks harder (hip drop 0.15 to 0.5 torso lengths)
   const Pr = runIn*(truck ? tm : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
   // the whiff: you're past his reach. A defender who came in hot can't redirect.
   const hot = Math.hypot(d.vx, d.vz) > d.speed*0.85, reach = hot ? REACH*0.8 : REACH;
@@ -2449,15 +2402,14 @@ function updateLive(dt, t){
     if (p.z >= 0.5) g.lane = null;
   }
   // speed from step cadence
-  const sps = stepsPerSec(t);
+  const sps = stepsPerSec(t), raw = input.steps.length/1.2;
+  if (raw >= 3) g.stats.sprint = (g.stats.sprint || 0) + dt;   // real sprint time: 3 or more steps a second
+  if (mode === "body") noteBest("cadence", raw);
   // speed from cadence: linear up to 4 steps a second, then each extra step buys a bit less, so faster
   // knees always pay off but there's no cliff where nobody can ever catch you
   const target = sps <= 4 ? sps*1.9 : Math.min(9.8, 7.6 + (sps - 4)*1.2);
   // the booth notices your knees: slow ones once the play is going, fast ones held for a couple of seconds
-  if (-g.t > 1.5 && !p.cadCall){
-    if (sps < 2.2) { p.slowFor = (p.slowFor || 0) + dt; if (p.slowFor > 1.2){ p.cadCall = true; announce("slow", {chance: 0.6}); } }
-    else if (sps > 5.0) { p.fastFor = (p.fastFor || 0) + dt; if (p.fastFor > 1.8){ p.cadCall = true; announce("fast", {chance: 0.6}); } }
-  }
+
   p.speed += clamp(target - p.speed, -5*dt, 4*dt);   // getting back up to speed after a cut or a hit takes a moment
   p.bob += dt*(2 + sps*2.2);
   // moves
@@ -2473,9 +2425,9 @@ function updateLive(dt, t){
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
   input.juke = 0; input.shoulder = input.stiff = false; input.jukeT = input.shoulderT = input.stiffT = null; input.stiffSide = 0;
   // effort pays: a bigger, faster bound makes a bigger cut (1.2 to 2.6 yards), and a big one fools even a tackler who's under control
-  if (mode === "body" && p.jukeT < 0.3 && p.jukeLat0 != null){ p.jukeMax = Math.max(p.jukeMax, Math.abs(BodyCore.state.lateral - p.jukeLat0)); p.jukeK = p.jukeMax; p.jukeTo = p.jukeFrom + p.jukeDir*clamp(1 + 3*p.jukeMax, 1.2, 2.6); }
+  if (mode === "body" && p.jukeT < 0.3 && p.jukeLat0 != null){ p.jukeMax = Math.max(p.jukeMax, Math.abs(BodyCore.state.lateral - p.jukeLat0)); p.jukeK = p.jukeMax; noteBest("bound", p.jukeMax); p.jukeTo = p.jukeFrom + p.jukeDir*clamp(1 + 3*p.jukeMax, 1.2, 2.6); }
   // the deeper your squat, the harder your truck (and a deep one carries into the pile)
-  if (mode === "body") p.depth = Math.max(BodyCore.state.stance, (p.depth || 0) - dt*0.6);
+  if (mode === "body"){ p.depth = Math.max(BodyCore.state.depth, (p.depth || 0) - dt*0.3); noteBest("squat", BodyCore.state.depth); }   // hip drop in torso lengths
   if (p.jukeT < 0.22){ p.jukeT += dt; const u = clamp(p.jukeT/0.22, 0, 1); p.x = lerp(p.jukeFrom, p.jukeTo, 1 - (1-u)*(1-u)); }
   p.dip = Math.max(0, p.dip - dt*2.2); p.stiffAnim = Math.max(0, p.stiffAnim - dt*2.8);
   // the path finds itself: behind the line you follow the most open lane; past it you bend toward open grass
@@ -2720,7 +2672,7 @@ function updatePass(dt, t){
   if (pp.setAt == null && pp.stanceNow) pp.setAt = t - L;
   if (r.state === "engaged"){
     const seenT = t - L;
-    if (seenT >= pp.contactAt && seenT <= pp.contactAt + pp.anchor){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt*(mode === "body" ? 1 + 0.5*clamp(BodyCore.state.stance - 1, 0, 1) : 1); }   // a deeper squat anchors faster
+    if (seenT >= pp.contactAt && seenT <= pp.contactAt + pp.anchor){ pp.held = (pp.held || 0) + dt; if (pp.stanceNow) pp.stanceTime += dt*(mode === "body" ? 1 + 0.5*clamp((BodyCore.state.depth - 0.25)/0.25, 0, 1) : 1); }   // a deeper squat anchors faster (hip drop in torso lengths)
     // the bull rush: he drives you back while you're out of your stance
     r.z = p.z + 0.85; r.x = p.x + Math.sin(t*9)*0.08;
     if (!pp.stanceNow) p.z -= 0.8*dt;
@@ -2737,7 +2689,7 @@ function endPass(result, why){
   g.stats.passPro++;
   let kind = null, gain = 0;
   if (result === "clean"){ g.stats.clean++; gain = Math.round(g.pp && g.pp.punchGood ? rand(16, 34) : rand(10, 24)); }
-  else if (result === "hurried"){ if (Math.random() < 0.5) gain = Math.round(rand(3, 8)); else kind = "incomplete"; }
+  else if (result === "hurried"){ g.stats.hurried = (g.stats.hurried || 0) + 1; if (Math.random() < 0.5) gain = Math.round(rand(3, 8)); else kind = "incomplete"; }
   else { g.stats.sacks++; gain = -Math.min(Math.round(rand(5, 9)), 99 - g.ballOn); kind = "sack"; }
   if (!kind) kind = gain >= g.ballOn ? "td" : "pass";
   if (kind === "td") gain = g.ballOn;
@@ -2799,19 +2751,42 @@ function startOpponent(afterTD, lead){
   g.phase = "opp"; g.t = lead ? 7.2 : 3.4; g.oppText = text; g.oppShowIn = afterTD ? 2.2 : lead ? 5 : 1.2; g.oppPts = pts;
   g.ballOn = text.startsWith("Interception") ? Math.round(rand(40, 60)) : 75; g.down = 1; g.toGo = 10;
 }
+/* ---------- records ----------
+   Body play only, in body units, saved on the device across sessions: top cadence (steps a second, held
+   over 1.2 s), highest knees (thigh angle in degrees), longest juke bound (hip shift in torso lengths),
+   deepest truck squat (hip drop in torso lengths). Shown with the previous best; no praise. */
+const REC_KEY = "hhRecords1";
+const REC_LIST = [["cadence", "Top cadence", v => `${v.toFixed(1)} steps a second`], ["knee", "Highest knees", v => `${Math.round(v)} degree thigh lift`],
+  ["bound", "Longest juke bound", v => `${v.toFixed(2)} torso lengths`], ["squat", "Deepest truck squat", v => `${v.toFixed(2)} torso lengths of hip drop`]];
+function noteBest(k, v){ const g = game; if (!g || mode !== "body" || !isFinite(v) || (k === "squat" && v < 0.1) || (k === "bound" && v < 0.05)) return; g.best = g.best || {}; if (!(g.best[k] >= v)) g.best[k] = v; }
+function loadRecords(){ try{ return JSON.parse(localStorage.getItem(REC_KEY)) || {}; }catch(e){ return {}; } }
+function saveRecords(r){ try{ localStorage.setItem(REC_KEY, JSON.stringify(r)); }catch(e){} }
 function endGame(){
   const g = game; g.phase = "over"; g.clock = 0; updateBoard();
   $("board").hidden = true; $("banner").hidden = true; $("playCard").hidden = true; $("pauseBtn").hidden = true; hint(null);
   const win = g.home > g.away, tie = g.home === g.away;
-  $("endTitle").textContent = win ? "Homecoming win!" : tie ? "Tie game" : "Tough loss";
-  $("endSub").textContent = `Final: Mustangs ${g.home}, Raiders ${g.away}. ${Math.round(g.realT/60)} minute workout: ${Math.round(g.stats.work)} seconds of hard sprinting across ${g.stats.carries + g.stats.passPro + g.stats.targets} plays.`;
-  const s = g.stats, ypc = s.carries ? (s.yards/s.carries).toFixed(1) : "0.0";
-  const items = [["Rush yards", s.yards],["Carries", s.carries],["Yards per carry", ypc],["Touchdowns", s.tds],["Long run", s.long],["First downs", s.firstDowns],["Jukes", s.jukes],["Trucks", s.trucks],["Stiff arms", s.stiffs],
-    ["Blitz pickups", `${s.pickups}/${s.passPro}`],["Clean pockets", s.clean],["Sacks allowed", s.sacks],
-    ["Catches", `${s.catches}/${s.targets}`],["Rec yards", s.recYards]];
-  $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
+  $("endTitle").textContent = win ? "Mustangs win" : tie ? "Tie game" : "Raiders win";
+  // plain facts: what you did, in numbers
+  const s = g.stats, other = Math.max(0, s.broken - s.jukes - s.trucks - s.stiffs), mins = Math.round(g.realT/60), spr = Math.round(s.sprint || 0);
+  $("endSub").textContent = `Mustangs ${g.home}, Raiders ${g.away}. ${mins} minutes, ${spr} seconds at sprint pace (3 or more steps a second), ${s.carries + s.passPro + s.targets} plays.`;
+  const items = [["Carries", s.carries], ["Rush yards", s.yards], ["Long run", s.long], ["Touchdowns", s.tds], ["First downs", s.firstDowns],
+    ["Broken by juke", s.jukes], ["Broken by truck", s.trucks], ["Broken by stiff arm", s.stiffs], ["Broken by speed or power", other],
+    ["Catches", `${s.catches} of ${s.targets}`], ["Rec yards", s.recYards],
+    ["Pass pro reps", s.passPro], ["Clean pockets", s.clean], ["Hurried", s.hurried || 0], ["Sacks", s.sacks]];
+  // records: this game's best, then the previous best (body play only)
+  let recHtml = "";
+  if (mode === "body" && g.best){
+    const R = loadRecords(), next = {...R};
+    recHtml = REC_LIST.filter(([k]) => g.best[k] != null).map(([k, label, fmt]) => {
+      const now = g.best[k], prev = R[k];
+      if (!(prev >= now)) next[k] = now;
+      return `<div class="rec"><b>${fmt(now)}</b><span>${label}${prev != null ? `, previous best ${fmt(prev)}` : ", first record"}</span></div>`;
+    }).join("");
+    saveRecords(next);
+  }
+  $("stats").innerHTML = items.map(([k,v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("") + recHtml;
   $("endScreen").hidden = false;
-  say(win ? "Homecoming win! Mustangs take it." : "Final score.", true);
+  say("Final score.", true);
   announce(win ? "win" : "loss", {force: true, delay: 0.5});
   if (win) sfx.cheer();
   try{ wakeLock?.release(); }catch(e){}
@@ -3980,7 +3955,7 @@ $("quitBtn").addEventListener("click", () => { paused = false; $("pauseScreen").
 document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
 
 // hooks for automated testing only
-window.__hh = { get game(){ return game; }, input, startTouch, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup, warmPlan, warmUI, drawDemo, coach,
+window.__hh = { get game(){ return game; }, input, startTouch, endGame, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup, warmPlan, warmUI, drawDemo, coach,
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();
