@@ -149,7 +149,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 17 PM, deep squats, replay calls</p>
+    <p class="diag" id="buildStamp">Build: Oct 18, beast mode, steady 3D</p>
   </div>
 </div>
 
@@ -1255,7 +1255,9 @@ const Studio = (() => {
   // what to make first: play calls and coaching, then the booth's lines for the current mode
   function prewarm(){
     const calls = [...PLAYS, ...PASS_PLAYS, ...ROUTE_PLAYS].flatMap(p => [1, 2].map(n => huddleCall({play: p, count: n})));
-    const coach = [...calls, ...Object.values(FRONT_CALL).map(f => f[0]), ...CADENCE_WORDS.flatMap(w => CADENCE_NUMS.map(n => `Down! Set! ${w} ${n}!`)), "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
+    // the pre-snap lines first (the call, the front, the cadence), so no device voice cuts into the snap count
+    for (const t of [...Object.values(FRONT_CALL).map(f => f[0]), ...MIKE_NUMS.map(n => `Mike ${n}!`), ...CADENCE_WORDS.flatMap(w => CADENCE_NUMS.map(n => `Down! Set! ${w} ${n}!`))]) want(t, false, -1);
+    const coach = [...calls, "Touchdown Mustangs!", "First down!", "Juked him!", "Trucked!", "Caught it!", "Clean pocket!", "Sack.", "Halftime", "Turnover on downs",
       "Punt.", "The kick is good!", "No good.", "Homecoming win! Mustangs take it.", "Final score.",
       "Raiders march down and score a touchdown.", "Raiders kick a field goal.", "Mustangs defense forces a punt.", "Interception! The Mustangs defense takes it back."];
     const warm = [WARM_STAND, ...WARM_MOVES].map(m => m.say).concat(["Round 1.", "Round 2.", "One more round.", "Locked in.", "You're set.", "Step back", "Step closer", "Step left", "Step right",
@@ -1819,7 +1821,7 @@ function pacing(g, newDrive){
 const huddleCall = g => `${g.play.call || g.play.name}, on ${g.count === 2 ? "two" : "one"}. Ready, break!`;
 // at the line the QB identifies the front, so the defense call comes when you can see it
 const FRONT_CALL = {"goal line": ["Goal line! Goal line!", "Low pads"], "short yardage": ["Heavy! Heavy!", "Short yardage. They're stacked"], nickel: ["Nickel! Nickel!", "Light box"], "cover 2": ["Two high! Two high!", "Two deep safeties"], "run blitz": ["Mike's hot! Mike's hot!", "Watch the blitz"]};
-const CADENCE_WORDS = ["Blue", "Red", "Green", "White"], CADENCE_NUMS = [18, 42, 54, 80];
+const CADENCE_WORDS = ["Blue", "Red", "Green", "White"], CADENCE_NUMS = [18, 42, 54, 80], MIKE_NUMS = [44, 50, 52, 55, 58];
 function playCard(){
   const g = game, touch = mode === "touch", arrow = g.play.dir > 0 ? "➡️" : "⬅️";
   const side = g.play.hole > 0.5 ? "right" : g.play.hole < -0.5 ? "left" : "up the middle", runArrow = g.play.hole > 0.5 ? "↗️" : g.play.hole < -0.5 ? "↖️" : "⬆️";
@@ -1958,6 +1960,8 @@ function spawnDefense(){
   const e = g.ease || 0;
   if (e > 0) g.stats.eased++;
   if (e > 0) for (const x of D){ x.speed *= 1 - 0.06*e; if (x.type === "LB") x.delay = (x.delay || 0) + 0.15*e; if (x.blockedUntil) x.blockedUntil += 0.15*e; }
+  // linebackers wear a few fixed numbers (the QB's "Mike 52!" call is then a line the Studio voice already has)
+  D.filter(x => x.type === "LB").forEach((x, i) => x.num = MIKE_NUMS[(i + g.down + g.q) % MIKE_NUMS.length]);
   // goal line: defenders can't line up past the end zone
   for (const x of D) x.z = Math.min(x.z, g.ballOn + 2);
   g.defenders = D;
@@ -2205,6 +2209,13 @@ function updatePile(dt, t){
   pl.t += dt;
   const drive = Math.max(0, sps - 1.5)*0.65*(low ? 1.4 : 1)*(1 - pl.t/pl.dur);   // about 3 yards for fast knees and a low shoulder
   p.z += drive*dt; pl.gained = p.z - pl.start;
+  // beast mode: stay low, churn fast enough for long enough, and you burst out the other side of the pile, still running
+  if (low) pl.power = (pl.power || 0) + Math.max(0, sps - 3.2)*dt;   // only with the shoulder down (squat or duck) and the knees churning
+  if (pl.power > 1.1 && pl.t < pl.dur){
+    if (pl.d){ pl.d.state = "down"; pl.d.vx = rand(-2, 2); pl.d.vz = 2; }
+    g.pile = null; p.speed = 5.5; p.lastShoulder = -9; g.stats.broken++; sfx.pads(); g.shake = 0.6; crowd(0.4, 2);
+    banner("Beast mode!", "Out the other side!", 1.2); announce("truck", {chance: 0.7}); return;
+  }
   if (pl.d){ pl.d.z = p.z + 0.5; pl.d.x += (p.x - pl.d.x)*dt*4; }
   // help arrives: the pile stops sooner
   for (const d of g.defenders) if (d !== pl.d && d.state !== "down" && d.state !== "resolved" && !d.block && Math.hypot(d.x - p.x, d.z - p.z) < 1.4){ pl.dur = Math.min(pl.dur, pl.t + 0.8); d.state = "resolved"; }
@@ -2351,14 +2362,14 @@ function resolveContact(d, t, tc = t){
   // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
   const noMove = !truck && !stiff && sinceJuke > 1.2;
   if (noMove && !dive && Math.abs(dx) < 0.9 && nz > 0.5) hold = Math.max(hold, hot ? 0.7 : 0.85);
-  hold = Math.max(hold, 0.25);                             // nobody is untackleable...
+  hold = Math.max(hold*0.95, 0.22);                        // nobody is untackleable... (the 0.9: you're the star)
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
   if (Math.random() >= hold){
     // broken: he's knocked back along the line of the hit, and it costs you some speed
     const kick = Pr/m*0.8 + 1;
     d.state = "down"; d.vx = nx*kick + rand(-1, 1); d.vz = nz*kick;
-    p.speed *= clamp(1 - 0.5*Pd/(Pd + Pr), 0.45, 0.85);
+    p.speed *= clamp(1 - 0.4*Pd/(Pd + Pr), 0.6, 0.9);   // beating a man barely slows you: Barry Sanders the whole defense
     g.stats.broken++; sfx.pads(); g.shake = truck ? 0.5 : 0.35; crowd(0.3, 1);
     if (truck){ g.stats.trucks++; banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); }
     else if (stiff){ g.stats.stiffs++; banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); }
@@ -2449,7 +2460,7 @@ function updateLive(dt, t){
   p.bob += dt*(2 + sps*2.2);
   // moves
   if (input.juke && t - p.lastJuke > 0.55){
-    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.78; sfx.whoosh();   // a real cut: about a step and a half, and it costs speed
+    p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.9; sfx.whoosh();   // a real cut: about a step and a half, and it costs a little speed
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
@@ -2605,7 +2616,7 @@ function updateRoute(dt, t){
   // the throw: right after your break, or late if you never get there
   if (rt.throwAt == null && (rt.broke != null || (rt.cueAt != null && t > rt.cueAt + 1.0) || rt.liveT > 4.0)){
     rt.flight = rt.screen ? 0.75 : pl.dir === 0 ? 1.05 : THROW_FLIGHT;
-    rt.throwAt = t + 0.15; rt.arriveAt = rt.throwAt + rt.flight;
+    rt.throwAt = t + (rt.broke != null && !rt.screen ? 0.45 : 0.15); rt.arriveAt = rt.throwAt + rt.flight;   // a beat to get your head around
   }
   if (rt.throwAt != null && !g.ball && t >= rt.throwAt){
     const tg = rt.broke != null ? routeBallTarget() : {x: rt.coneX + pl.dir*4, z: rt.coneZ + 1.5};
@@ -2830,7 +2841,7 @@ function update(dt){
         P.stage = "survey"; P.t = 0;
         const fc = FRONT_CALL[g.front] || (g.playType === "run" && Math.random() < 0.35 ? null : undefined);
         if (fc){ say(fc[0], true); banner(fc[0].split("!")[0] + "!", fc[1], 1.4); }
-        else if (fc === null){ const mike = g.defenders.find(d => d.type === "LB" && Math.abs(d.x) < 2); if (mike) say(`Mike ${mike.num}!`, true); }
+        else if (fc === null){ const mike = g.defenders.find(d => d.type === "LB" && Math.abs(d.x) < 2); if (mike && MIKE_NUMS.includes(mike.num)) say(`Mike ${mike.num}!`, true); }
       }
     } else if (P.stage === "motion"){
       // motion: you jog out to the slot (a few seconds of sneaky rest, too)
@@ -2918,6 +2929,11 @@ function camState(in3D){
   const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
   const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
   if (in3D && g && g.replay) return replayCam(c, g.replay);
+  if (g && g.ball && (g.playType === "pass" || (g.playType === "route" && !g.ball.caught)) && (g.phase === "live" || g.phase === "dead")){
+    const b = g.ball, u = clamp((now() - b.t0)/b.dur, 0, 1.2), bx = lerp(b.x0, b.x1, Math.min(u, 1)), bz = lerp(b.z0, b.z1, Math.min(u, 1));
+    if (g.playType === "route") c.yaw = clamp(Math.atan2(bx - p.x, Math.max(0.6, bz - p.z + 5)), -0.9, 0.9)*(u < 1 ? 1 : 0);   // over your shoulder
+    else { const k = ease(Math.min(1, u*3)); c.yaw = clamp(Math.atan2(bx - p.x, Math.max(1, bz - p.z)), -0.8, 0.8)*k; if (in3D) c.pitch = -0.22*Math.sin(Math.min(u, 1)*Math.PI)*k; }   // watch the throw downfield
+  }
   return in3D && g && g.offense ? preSnapCam(g, c) : c;
 }
 // yaw turns your head (+ is right); the 3D camera turns the same way, so 2D overlays stay on the 3D world
@@ -3545,15 +3561,16 @@ const R3 = (() => {
   /* ---------- players ---------- */
   function buildMaterials(){
     // glossy helmets, matte jerseys: Phong gives the helmets a highlight; everything is two-sided so lathed parts never show holes
-    const ph = (color, shininess = 12, o = {}) => new T.MeshPhongMaterial(Object.assign({color, shininess, specular: 0x222222, side: T.DoubleSide}, o));
+    // Lambert (cheap) for cloth and skin; Phong only where the shine matters (helmets, facemasks)
+    const ph = (color, shininess = 12, o = {}) => shininess >= 60 ? new T.MeshPhongMaterial(Object.assign({color, shininess, specular: 0x222222, side: T.DoubleSide}, o)) : new T.MeshLambertMaterial({color, side: T.DoubleSide});
     Object.assign(M, {home: ph(COL.home, 8), away: ph(COL.away, 8), pants: ph(COL.pants, 18), awayPants: ph(0xd9d2c2, 18), skin: ph(COL.skin, 20), skin2: ph(COL.skinDark, 20),
       helmHome: ph(0xe8eef8, 90, {specular: 0x888888}), helmAway: ph(0x8e1c23, 90, {specular: 0x777777}), black: ph(0x151515, 40), gold: ph(COL.gold, 30), mask: ph(0xbfc3c9, 60, {specular: 0x999999}),
       sockAway: ph(0xf2e6d0, 6), sockHome: ph(0xf4f4f4, 6), gloveHome: ph(0xf4f4f4, 10), gloveAway: ph(0x1b1b1b, 10), trimHome: ph(COL.home, 10), trimAway: ph(0x8e1c23, 10),
       shadow: new T.MeshBasicMaterial({color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false})});
     const V2 = (r, y) => new T.Vector2(r, y);
     // a smooth limb or body part turned on a lathe: [radius, height] pairs from bottom to top, squashed front to back by zs
-    const lathe = (pts, zs = 1, seg = 12) => { const g = new T.LatheGeometry(pts.map(([r, y]) => V2(r, y)), seg); g.scale(1, 1, zs); return g; };
-    const ball = (r, sx, sy, sz, x = 0, y = 0, z = 0) => { const g = new T.SphereGeometry(r, 14, 10); g.scale(sx, sy, sz); g.translate(x, y, z); return g; };
+    const lathe = (pts, zs = 1, seg = 9) => { const g = new T.LatheGeometry(pts.map(([r, y]) => V2(r, y)), seg); g.scale(1, 1, zs); return g; };
+    const ball = (r, sx, sy, sz, x = 0, y = 0, z = 0) => { const g = new T.SphereGeometry(r, 10, 7); g.scale(sx, sy, sz); g.translate(x, y, z); return g; };
     const B = (w, h, d, dy = 0) => { const g = new T.BoxGeometry(w, h, d); g.translate(0, dy, 0); return g; };
     // several parts that share a material become one mesh (fewer draw calls on a phone)
     const merge = list => {
@@ -3821,8 +3838,9 @@ const R3 = (() => {
     lowFor = BodyCore.fps < 20 ? lowFor + dt : Math.max(0, lowFor - dt);
     if (lowFor < 4) return;
     lowFor = 0;
-    if (pr > 1){ pr = 1; renderer.setPixelRatio(pr); renderer.setSize(W, H, false); info.pr = pr; }
-    else off("tracking slowed down");
+    // step the resolution down; never switch to the flat 2D view in the middle of a workout
+    const next = [1.5, 1, 0.75, 0.6].find(v => v < pr - 0.01);
+    if (next){ pr = next; renderer.setPixelRatio(pr); renderer.setSize(W, H, false); info.pr = pr; }
   }
   function resize(){ if (renderer){ renderer.setSize(W, H, false); boardKey = ""; } }
   function hide(){ if (el) el.hidden = true; }
