@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 21, double teams, half and deep squats</p>
+    <p class="diag" id="buildStamp">Build: Oct 22, KayKit players</p>
   </div>
 </div>
 
@@ -3407,6 +3407,7 @@ const R3 = (() => {
     buildField(); buildStands(); buildLights(); buildBoard(); buildPosts();
     buildMaterials(); buildArrow(); buildBall(); buildCone(); buildFireworks();
     for (let i = 0; i < 28; i++) figs.push(makeFig());
+    loadKit();   // the rigged players load in the background; the procedural ones play until they're in
     info.pr = pr;
   }
 
@@ -3806,9 +3807,166 @@ const R3 = (() => {
     if (spd > 0.3){ o.amp = Math.min(0.85, spd*0.14); o.anim = m.phase; o.sf = fwd/spd; o.ss = side/spd; o.lean = 0.1 + 0.32*Math.min(1, spd/7); }
     return o;
   }
+
+  /* ---------- rigged players: the KayKit Adventurers pack (CC0, Kay Lousberg) ----------
+     Three .glb files in models/, loaded through the jsdelivr GitHub CDN (the repo's own copy as a fallback).
+     A small GLB reader built on the page's three.js (the official GLTFLoader is an ES module and would load a
+     second copy of three). The six skinned body parts merge into one mesh per player; weapons, shields and
+     capes are dropped; the helmet or hat stays. One shared atlas texture, tinted per team. Animations: idle,
+     a set stance, running (sped up with the player), blocking, and the fall when tackled. Until the files
+     arrive, or if they fail, the procedural players stay on. */
+  const KIT = {ready: false, failed: "", assets: {}, pools: {Barbarian: [], Knight: [], Rogue: []}, used: {}};
+  const KIT_FILES = ["Barbarian", "Knight", "Rogue"], KIT_HEIGHT = 1.95;
+  const KIT_KEEP = /helmet|hat/i, KIT_POOL = {Barbarian: 12, Knight: 10, Rogue: 12};
+  async function kitFetch(name){
+    for (const base of ["https://cdn.jsdelivr.net/gh/hungkach/homecoming-hero@main/models/", "models/"]){
+      try{ const r = await fetch(base + name + ".glb"); if (r.ok) return await r.arrayBuffer(); }catch(e){}
+    }
+    throw new Error(name + ".glb did not load");
+  }
+  async function kitParse(buf){
+    const dv = new DataView(buf), jl = dv.getUint32(12, true);
+    const J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl)));
+    const binLen = dv.getUint32(20 + jl, true), bin = buf.slice(28 + jl, 28 + jl + binLen);
+    const TYPES = {5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array}, N = {SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16};
+    const acc = i => { const a = J.accessors[i], v = J.bufferViews[a.bufferView], C = TYPES[a.componentType], n = N[a.type], off = (v.byteOffset || 0) + (a.byteOffset || 0);
+      if (v.byteStride && v.byteStride !== n*C.BYTES_PER_ELEMENT){ const out = new C(a.count*n), src = new DataView(bin), rd = {1: "getUint8", 2: "getUint16", 4: C === Float32Array ? "getFloat32" : "getUint32"}[C.BYTES_PER_ELEMENT];
+        for (let k = 0; k < a.count; k++) for (let j = 0; j < n; j++) out[k*n + j] = src[rd](off + k*v.byteStride + j*C.BYTES_PER_ELEMENT, true); return out; }
+      return new C(bin.slice(off, off + a.count*n*C.BYTES_PER_ELEMENT)); };
+    // the atlas texture
+    const im = J.images[0], iv = J.bufferViews[im.bufferView];
+    const img = new Image(); img.src = URL.createObjectURL(new Blob([new Uint8Array(bin, iv.byteOffset || 0, iv.byteLength)], {type: im.mimeType}));
+    await img.decode();
+    const tex = new T.Texture(img); tex.flipY = false; tex.colorSpace = T.SRGBColorSpace; tex.needsUpdate = true;
+    const geo = (prims, skinned) => {   // primitives of one or more meshes merged into one geometry
+      const P = [], Nn = [], U = [], Jt = [], Wt = [], I = []; let base = 0;
+      for (const pr of prims){
+        const a = pr.attributes, pos = acc(a.POSITION), cnt = pos.length/3;
+        P.push(pos); Nn.push(acc(a.NORMAL)); U.push(acc(a.TEXCOORD_0));
+        if (skinned){ Jt.push(Uint16Array.from(acc(a.JOINTS_0))); Wt.push(Float32Array.from(acc(a.WEIGHTS_0))); }
+        const idx = pr.indices != null ? acc(pr.indices) : Uint32Array.from({length: cnt}, (_, k) => k);
+        I.push(Uint32Array.from(idx, k => k + base)); base += cnt;
+      }
+      const cat = (L, C) => { const out = new C(L.reduce((x, y) => x + y.length, 0)); let o = 0; for (const x of L){ out.set(x, o); o += x.length; } return out; };
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.BufferAttribute(cat(P, Float32Array), 3)); g.setAttribute("normal", new T.BufferAttribute(cat(Nn, Float32Array), 3)); g.setAttribute("uv", new T.BufferAttribute(cat(U, Float32Array), 2));
+      if (skinned){ g.setAttribute("skinIndex", new T.BufferAttribute(cat(Jt, Uint16Array), 4)); g.setAttribute("skinWeight", new T.BufferAttribute(cat(Wt, Float32Array), 4)); }
+      g.setIndex(new T.BufferAttribute(cat(I, Uint32Array), 1)); g.computeBoundingBox(); return g;
+    };
+    const skinNodes = J.nodes.map((n, i) => i).filter(i => J.nodes[i].mesh != null && J.nodes[i].skin != null);
+    // the head's texture coordinates: the colors it uses (skin, hair, beard) keep their own color in team recoloring
+    const headUV = skinNodes.filter(i => /_head$/i.test(J.nodes[i].name)).flatMap(i => J.meshes[J.nodes[i].mesh].primitives.map(pr => acc(pr.attributes.TEXCOORD_0)));
+    const body = geo(skinNodes.flatMap(i => J.meshes[J.nodes[i].mesh].primitives), true);
+    const statics = {};
+    J.nodes.forEach((n, i) => { if (n.mesh != null && n.skin == null && KIT_KEEP.test(n.name)) statics[i] = geo(J.meshes[n.mesh].primitives, false); });
+    const skin = J.skins[0], ibm = acc(skin.inverseBindMatrices), inverses = skin.joints.map((_, k) => new T.Matrix4().fromArray(ibm, k*16));
+    const clean = nm => T.PropertyBinding.sanitizeNodeName(nm);
+    const clips = {};
+    for (const an of J.animations){
+      const tracks = [];
+      for (const ch of an.channels){
+        const sm = an.samplers[ch.sampler], node = clean(J.nodes[ch.target.node].name), times = Float32Array.from(acc(sm.input)), vals = Float32Array.from(acc(sm.output));
+        const Tk = ch.target.path === "rotation" ? T.QuaternionKeyframeTrack : T.VectorKeyframeTrack;
+        tracks.push(new Tk(node + "." + {translation: "position", rotation: "quaternion", scale: "scale"}[ch.target.path], times, vals));
+      }
+      clips[an.name] = new T.AnimationClip(an.name, -1, tracks);
+    }
+    // the rest pose's height (head included); the instance scales it to a player
+    return {J, tex, body, statics, inverses, clips, joints: skin.joints, clean, mats: {}, height: body.boundingBox.max.y, headUV};
+  }
+  // team colors: the pack's atlas recolored per team. Saturated cloth turns to the team hue (Mustangs blue,
+  // Raiders red); skin tones and grey metal keep their own color, with a light tint on the metal.
+  function kitMat(a, team){
+    if (a.mats[team]) return a.mats[team];
+    const img = a.tex.image, cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
+    const cx2 = cv.getContext("2d"); cx2.drawImage(img, 0, 0);
+    const px = cx2.getImageData(0, 0, cv.width, cv.height), d = px.data, hue = team === "home" ? 222 : 356, W2 = cv.width, H2 = cv.height;
+    const q = i => (d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | (d[i + 2] >> 3), keep = new Set();
+    for (const uv of a.headUV) for (let k = 0; k < uv.length; k += 2){ const x = Math.min(W2 - 1, Math.max(0, Math.floor(uv[k]*W2))), y = Math.min(H2 - 1, Math.max(0, Math.floor(uv[k + 1]*H2))); keep.add(q((y*W2 + x)*4)); }
+    const col = new T.Color(), hsl = {};
+    for (let i = 0; i < d.length; i += 4){
+      if (keep.has(q(i))) continue;   // skin, hair and beard colors
+      col.setRGB(d[i]/255, d[i + 1]/255, d[i + 2]/255); col.getHSL(hsl);
+      if (hsl.s > 0.22){ col.setHSL(hue/360, Math.max(hsl.s, 0.55), hsl.l); d[i] = col.r*255; d[i + 1] = col.g*255; d[i + 2] = col.b*255; }
+    }
+    cx2.putImageData(px, 0, 0);
+    const tex = new T.CanvasTexture(cv); tex.flipY = false; tex.colorSpace = T.SRGBColorSpace;
+    return a.mats[team] = new T.MeshLambertMaterial({map: tex, color: team === "home" ? 0xe6edff : 0xffe6e6});
+  }
+  function kitInstance(name){
+    const a = KIT.assets[name], J = a.J, jointSet = new Set(a.joints), objs = [];
+    const mk = i => {
+      const n = J.nodes[i]; let o;
+      if (jointSet.has(i)) o = new T.Bone();
+      else if (a.statics[i]) o = new T.Mesh(a.statics[i], kitMat(a, "home"));
+      else o = new T.Group();
+      o.name = a.clean(n.name || "n" + i);
+      if (n.translation) o.position.fromArray(n.translation);
+      if (n.rotation) o.quaternion.fromArray(n.rotation);
+      if (n.scale) o.scale.fromArray(n.scale);
+      objs[i] = o;
+      for (const c of n.children || []){ const cn = J.nodes[c]; if (cn.mesh != null && cn.skin != null) continue; if (cn.mesh != null && !a.statics[c]) continue; o.add(mk(c)); }
+      return o;
+    };
+    const root = new T.Group(), rig = new T.Group();
+    for (const i of J.scenes[J.scene || 0].nodes) rig.add(mk(i));
+    root.add(rig);
+    const skinned = new T.SkinnedMesh(a.body, kitMat(a, "home")); skinned.frustumCulled = false;
+    rig.children[0].add(skinned);
+    root.updateMatrixWorld(true);
+    skinned.bind(new T.Skeleton(a.joints.map(j => objs[j]), a.inverses), skinned.matrixWorld);
+    rig.scale.setScalar(KIT_HEIGHT/a.height*0.95);
+    const mixer = new T.AnimationMixer(rig);
+    const inst = {root, rig, skinned, mixer, asset: name, actions: {}, cur: null, team: "", helm: Object.values(objs).filter(o => o && o.isMesh && o !== skinned)};
+    root.visible = false; scene.add(root);
+    return inst;
+  }
+  function kitPlay(inst, name, o = {}){
+    const clip = KIT.assets[inst.asset].clips[name]; if (!clip) return;
+    let act = inst.actions[name]; if (!act) act = inst.actions[name] = inst.mixer.clipAction(clip);
+    act.timeScale = o.speed || 1;
+    if (inst.cur === name) return;
+    act.reset(); act.setLoop(o.once ? T.LoopOnce : T.LoopRepeat); act.clampWhenFinished = !!o.once; act.enabled = true;
+    const prev = inst.cur && inst.actions[inst.cur];
+    if (prev) act.crossFadeFrom(prev, o.fade ?? 0.18, false);
+    act.play(); inst.cur = name;
+  }
+  async function loadKit(){
+    try{
+      for (const n of KIT_FILES) KIT.assets[n] = await kitParse(await kitFetch(n));
+      for (const n of KIT_FILES) for (let i = 0; i < KIT_POOL[n]; i++) KIT.pools[n].push(kitInstance(n));
+      KIT.ready = true; info.models = "kaykit";
+    }catch(e){ KIT.failed = String(e && e.message || e); info.models = "procedural (" + KIT.failed.slice(0, 60) + ")"; }
+  }
+  // which body for which job: linemen are the Barbarian, linebackers, ends and the QB the Knight, skill players the Rogue
+  function kitRole(key, num){
+    const k = typeof key === "string" ? key : key && key.type ? key.type : "";
+    if (/^(DL|ol)|blkol|offol/.test(k) || k === "DL") return "Barbarian";
+    if (/LB|COV|te|qb|^7$/.test(k)) return "Knight";
+    if (/DB|wr|RB|rp/.test(k)) return "Rogue";
+    return num >= 50 && num < 80 ? "Barbarian" : num >= 80 || (num >= 40 && num < 50) ? "Knight" : "Rogue";
+  }
+  function kitPut(team, num, o, key, dt){
+    const name = kitRole(key, num), pool = KIT.pools[name], i = KIT.used[name] = (KIT.used[name] || 0) + 1;
+    const inst = pool[i - 1]; if (!inst) return;
+    if (inst.team !== team){ inst.skinned.material = kitMat(KIT.assets[name], team); for (const h of inst.helm) h.material = inst.skinned.material; inst.team = team; }
+    inst.root.visible = true; inst.root.position.set(o.x, 0, -o.z); inst.root.rotation.y = o.face || 0;
+    const spd = o.amp != null ? o.amp/0.14 : (o.run || 0)*6;
+    if (o.down){ kitPlay(inst, "Death_A", {once: true, fade: 0.08}); }
+    else if ((o.reach || 0) >= 0.6) kitPlay(inst, "Blocking");
+    else if (spd > 1.2) kitPlay(inst, "Running_A", {speed: clamp(spd/5.5, 0.6, 1.7)});
+    else if ((o.crouch || 0) >= 0.5) kitPlay(inst, "2H_Melee_Idle");
+    else kitPlay(inst, "Idle");
+    inst.mixer.update(dt);
+  }
   function placePlayers(t, dt){
     const g = game; let n = 0;
-    const put = (team, num, o, key, home = 0) => { if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, key != null && !o.down ? motion(key, o, home, dt) : o); };
+    if (KIT.ready) KIT.used = {};
+    const put = (team, num, o, key, home = 0) => {
+      const oo = key != null && !o.down ? motion(key, o, home, dt) : o;
+      if (KIT.ready){ kitPut(team, num, oo, key, dt); return; }   // the rigged players, once they've loaded
+      if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, oo);
+    };
     if (g && g.replay){
       // the replay: you, your blockers, and their defense, as recorded
       const F = replayFrame(g.replay);
@@ -3850,6 +4008,7 @@ const R3 = (() => {
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
+    if (KIT.ready) for (const nm of KIT_FILES) KIT.pools[nm].forEach((inst, i) => { if (i >= (KIT.used[nm] || 0)) inst.root.visible = false; });
   }
   // body tracking matters more than pixels: if detection slows down, render fewer pixels, then go back to 2D
   function guard(dt){
