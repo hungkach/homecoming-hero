@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 22, KayKit players</p>
+    <p class="diag" id="buildStamp">Build: Oct 22, football players back</p>
   </div>
 </div>
 
@@ -3407,7 +3407,8 @@ const R3 = (() => {
     buildField(); buildStands(); buildLights(); buildBoard(); buildPosts();
     buildMaterials(); buildArrow(); buildBall(); buildCone(); buildFireworks();
     for (let i = 0; i < 28; i++) figs.push(makeFig());
-    loadKit();   // the rigged players load in the background; the procedural ones play until they're in
+    // rigged model players only with ?kaykit in the link (the KayKit pack is cartoon fantasy, so the football players stay the default)
+    if (typeof location !== "undefined" && /[?&]kaykit\b/.test(location.search || "")) loadKit();
     info.pr = pr;
   }
 
