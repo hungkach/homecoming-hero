@@ -76,7 +76,7 @@ function director(t){
       else if (id === "knees" && u > 0) knees(P, u);
       else if (id === "jog" && u > 0) knees(P, u, 50);
       else if (id === "hopL") off.x = offX + 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // bound left (person's +x) and back
-      else if (id === "squat" && u > 0){ const a = 60*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
+      else if ((id === "halfSquat" || id === "deepSquat") && u > 0){ const a = (id === "deepSquat" ? 80 : 45)*ease(u/0.5), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
       else if (id === "duck") duck(P, armPulse(u));
       else if (id === "leanL") lean(P, -1, armPulse(u));
       else if (id === "leanR") lean(P, 1, armPulse(u));

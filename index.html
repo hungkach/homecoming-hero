@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 18, honest reps and records</p>
+    <p class="diag" id="buildStamp">Build: Oct 21, double teams, half and deep squats</p>
   </div>
 </div>
 
@@ -1486,7 +1486,8 @@ const WARM_MOVES = [
   {id: "knees", big: "High knees!", small: "Run in place. Knees up to your waist.", say: "High knees. Go!", secs: 3.0, cap: ["step"]},
   {id: "hopL", big: "Juke left", small: "Hop left and right back. Bigger and faster jukes harder.", say: "Juke left. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
   {id: "hopR", big: "Juke right", small: "Hop right and right back. Bigger and faster jukes harder.", say: "Juke right. Bound out, and back.", secs: 2.0, cap: ["hop"], once: true},
-  {id: "squat", big: "Truck!", small: "Drop into a squat. The deeper you go, the harder you hit.", say: "Truck! Squat low.", secs: 2.0, cap: ["level"]},
+  {id: "halfSquat", big: "Half squat", small: "Sit halfway down, a quick truck. Your lightest hit.", say: "Half squat. A quick truck.", secs: 2.0, cap: ["level"], capRound: "half"},
+  {id: "deepSquat", big: "Deep squat", small: "All the way down, thighs level. Your biggest hit.", say: "Deep squat. Your biggest hit.", secs: 2.2, cap: ["level"]},
   {id: "raiseL", big: "Stiff arm left", small: "Push your left arm straight out to the side.", say: "Stiff arm left. Arm out to the side.", secs: 1.6, cap: ["raise"]},
   {id: "raiseR", big: "Stiff arm right", small: "Push your right arm straight out to the side.", say: "Stiff arm right.", secs: 1.6, cap: ["raise"]},
   {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
@@ -1514,7 +1515,7 @@ function warmUI(S, t){
 function drawDemo(cv, id, t){
   const x = cv.getContext("2d"), W = cv.width, H = cv.height;
   x.clearRect(0, 0, W, H);
-  const P = {jog: 0.9, knees: 0.7, leanL: 1.6, leanR: 1.6, hopL: 1.6, hopR: 1.6, squat: 2, duck: 1.4, raiseL: 1.4, raiseR: 1.4, raiseB: 1.4, jump: 1.2}[id] || 2;
+  const P = {jog: 0.9, halfSquat: 2, deepSquat: 2.2, knees: 0.7, leanL: 1.6, leanR: 1.6, hopL: 1.6, hopR: 1.6, squat: 2, duck: 1.4, raiseL: 1.4, raiseR: 1.4, raiseB: 1.4, jump: 1.2}[id] || 2;
   const u = (t % P)/P, wave = Math.sin(u*Math.PI*2), hold = Math.sin(Math.PI*clamp(u*1.25, 0, 1));   // hold: 0 → 1 → 0, then rest
   const side = /L$/.test(id) ? -1 : 1, S = H/320;
   let offX = 0, lift = 0, drop = 0, tilt = 0, duck = 0, armL = 0.15, armR = 0.15, kneeL = 0, kneeR = 0;
@@ -1522,7 +1523,8 @@ function drawDemo(cv, id, t){
   else if (id === "knees"){ kneeL = Math.max(0, wave); kneeR = Math.max(0, -wave); armL = 0.3 + 0.3*Math.max(0, -wave); armR = 0.3 + 0.3*Math.max(0, wave); lift = 4*Math.abs(wave); }
   else if (id === "leanL" || id === "leanR") tilt = side*0.38*hold;
   else if (id === "hopL" || id === "hopR"){ const out = u < 0.15 ? ease(u/0.15) : u < 0.45 ? 1 : u < 0.6 ? 1 - ease((u - 0.45)/0.15) : 0; offX = side*55*out; lift = 18*(Math.sin(clamp(u/0.15, 0, 1)*Math.PI) + Math.sin(clamp((u - 0.45)/0.15, 0, 1)*Math.PI)); }
-  else if (id === "squat"){ drop = 42*hold; armL = armR = 1.4*hold + 0.15; }
+  else if (id === "squat" || id === "deepSquat"){ drop = 46*hold; armL = armR = 1.4*hold + 0.15; }
+  else if (id === "halfSquat"){ drop = 24*hold; armL = armR = 0.9*hold + 0.15; }
   else if (id === "duck"){ duck = hold; drop = 16*hold; tilt = -0.22*hold; armL = armR = 0.15 + 0.5*hold; }
   else if (id === "raiseL") armL = 0.15 + 1.42*hold;
   else if (id === "raiseR") armR = 0.15 + 1.42*hold;
@@ -1612,6 +1614,7 @@ function updateSetup(dt){
   if (S.phase === "movetest"){
     S.stepT -= dt;
     // capture starts a beat into each step, so the tail of the last move doesn't count for this one
+    if (S.cur && S.cur.id === "halfSquat" && S.stepLen - S.stepT >= 0.3) truckFloor.half = Math.max(truckFloor.half || 0, BodyCore.state.depth);   // your half squat sets the truck floor
     if (S.capNext && S.stepLen - S.stepT >= 0.3){ BodyCore.captureStart(S.capNext.cap, S.capNext.capRound ? S.capNext.capRound + (S.capNext.round || 0) : S.capNext.round || 0); S.capNext = null; }
     if (S.stepT > 0) return;
     const cur = S.plan[S.step];
@@ -1674,10 +1677,13 @@ function finishSetup(){
 }
 
 // turn body core events into game input; tEff already has the measured delay taken off
+// the truck floor: three quarters of your warm-up half squat (hip drop in torso lengths), never below 0.1, so running bob never trucks
+const truckFloor = {half: 0};
+const truckMin = () => Math.max(0.1, 0.75*(truckFloor.half || 0.15));
 const heldMoves = [];
 let lastHop = -9;
 function bodyMove(e){
-  if (e.type === "duck" || e.type === "level"){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or squat
+  if (e.type === "duck" || (e.type === "level" && BodyCore.state.depth >= 0.8*truckMin())){ input.shoulder = true; input.shoulderT = e.tEff; }   // truck: duck or a real squat
   else if (e.type === "raise" && game.playType === "run"){ input.stiff = true; input.stiffT = e.tEff; input.stiffSide = e.side === "R" ? 1 : -1; }   // stiff arm toward that side
 }
 function pumpBody(){
@@ -1998,6 +2004,7 @@ function preSnapCam(g, c){
    man locks on and drives him; the defender fights across his face toward the runner and sheds after a
    while (sooner in a goal line front, later quarters). Lanes open and close where the blocks win. */
 const SHED = {DL: [3.2, 4.6], LB: [2.0, 3.2], DB: [0.7, 1.5]};
+const BSTR = {OL: 1.0, TE: 0.85, WR: 0.55}, DSTR = {DL: 1.05, LB: 0.9, COV: 0.9, DB: 0.6};   // blocking strength: the contest in updateBlockers
 // Assignments, Madden style: every defender in the box gets a hat. When the box has more defenders than
 // blockers, the one left free is the man farthest backside, and he has to read the cutback before he chases.
 // Pullers get a real man too: power kicks out the playside linebacker, the toss leads on the edge.
@@ -2050,7 +2057,12 @@ function makeBlockers(){
     if (d.type !== "DL") best.mode = "climb";
   }
   // anyone still free doubles the nearest down lineman, then climbs to whoever comes
-  for (const b of free){ b.mode = "climb"; b.wait = 0.4; }
+  // a spare lineman doubles the nearest down lineman already taken (a combo block), then climbs to a linebacker
+  for (const b of free){
+    const dl = D.filter(d => d.type === "DL" && taken.has(d) && Math.abs(d.x - b.x) < 3).sort((a, c) => Math.abs(a.x - b.x) - Math.abs(c.x - b.x))[0];
+    if (dl && b.kind === "OL"){ b.mode = "double"; b.target = dl; b.wait = 0.05; b.drive = norm2({x: (dl.x - b.x)*0.5, z: 1}); }
+    else { b.mode = "climb"; b.wait = 0.4; }
+  }
   // receivers stalk the corner over them; the safeties stay free to fill the alley
   for (const w of B.filter(b => b.kind === "WR")){ const db = D.filter(d => d.type === "DB" && !taken.has(d) && Math.abs(d.x - w.x) < 5 && d.z < 10).sort((a, c) => Math.hypot(a.x - w.x, a.z - w.z) - Math.hypot(c.x - w.x, c.z - w.z))[0]; if (db){ claim(w, db, {x: Math.sign(w.x)*0.4, z: 1}, 0.3); w.mode = "climb"; } }
   // sheds: how long each block holds, shorter in later quarters and short-yardage fronts
@@ -2063,13 +2075,28 @@ function updateBlockers(dt, t){
   for (const b of g.blockers){
     b.anim = (b.anim || 0) + dt*8;
     const d = b.target;
+    if (b.engaged && b.helper){
+      // the second man on a double team: hip to hip with the first, then off to a linebacker who comes close (the combo)
+      if (!d.block || d.state === "down" || d.state === "resolved"){ b.engaged = b.helper = false; b.target = null; b.mode = "climb"; b.wait = live; continue; }
+      b.x = d.x - b.off.x; b.z = d.z - b.off.z;
+      if (live - b.engagedAt > 0.7){
+        const lb = g.defenders.find(x => x.type === "LB" && !x.block && x.state !== "down" && x.state !== "resolved" && Math.hypot(x.x - b.x, x.z - b.z) < 4 && g.t <= -x.delay);
+        if (lb){ b.engaged = b.helper = false; b.target = lb; b.mode = "seek"; b.wait = live; if (lb.shedAfter == null) lb.shedAfter = rand(SHED.LB[0], SHED.LB[1]); }
+      }
+      continue;
+    }
     if (b.engaged){
-      // locked on: drive him; he fights across the blocker's face toward the runner
-      if (d.state === "down" || d.state === "resolved" || live - b.engagedAt >= d.shedAfter){ d.shedAt = live; d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
-      const push = b.kind === "OL" ? (d.type === "DL" ? 0.7 : 1.4) : 1.0;
-      const fight = clamp(p.x - d.x, -1, 1)*0.5;
-      b.x += (b.drive.x*push + fight*0.3)*dt; b.z += b.drive.z*push*dt;
-      d.x = b.x + b.off.x + fight*0.15; d.z = b.z + b.off.z; d.vx = b.drive.x*push; d.vz = b.drive.z*push;
+      // locked on: a strength contest. Blockers on him add up (a double team drives a lineman back); he fights
+      // across the face toward the runner, and the losing side gives ground. Losing also wears the block down faster.
+      if (d.state === "down" || d.state === "resolved" || (d.shedProg || 0) >= d.shedAfter){ d.shedAt = live; d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
+      let sb = BSTR[b.kind] || 0.8;
+      for (const h of g.blockers) if (h !== b && h.engaged && h.helper && h.target === d) sb += 0.6*(BSTR[h.kind] || 0.8);
+      d.wob = clamp((d.wob || 0) + rand(-1, 1)*dt*1.5, -0.25, 0.25);
+      const net = clamp(sb - (DSTR[d.type] || 0.8)*(1 + 0.5*(d.shedBonus || 0)) - ((g.q - 1)/3)*0.15 + d.wob, -1, 1);
+      d.shedProg = (d.shedProg || 0) + dt*(1 + 1.2*Math.max(0, -net) - 0.6*Math.max(0, net));
+      const v = 0.3 + 1.1*net, fight = clamp(p.x - d.x, -1, 1)*0.5;
+      b.x += (b.drive.x*v + fight*0.3)*dt; b.z += b.drive.z*v*dt;
+      d.x = b.x + b.off.x + fight*0.15; d.z = b.z + b.off.z; d.vx = b.drive.x*v; d.vz = b.drive.z*v;
       continue;
     }
     if (b.mode === "pull" && b.path){
@@ -2092,7 +2119,15 @@ function updateBlockers(dt, t){
     }
     if (!d || live < b.wait){ continue; }
     if (d.state === "down" || d.state === "resolved"){ b.target = null; continue; }
-    if (d.block && d.block !== b){ b.target = null; continue; }   // someone else has him
+    if (d.block && d.block !== b){
+      // someone else has him: a lineman joins the double team on a down lineman; anyone else looks for work
+      if (b.kind === "OL" && d.type === "DL" && d.block.engaged){
+        const hx = d.x - b.x, hz = d.z - b.z, hd = Math.hypot(hx, hz) || 1;
+        if (hd < 1.3){ b.engaged = b.helper = true; b.engagedAt = live; b.off = {x: hx/hd*0.8, z: hz/hd*0.8}; continue; }
+        const st = Math.min(hd - 1.0, 6*dt); b.x += hx/hd*st; b.z += hz/hd*st; continue;
+      }
+      b.target = null; b.mode = "climb"; continue;
+    }
     // aim between him and the runner (his path to the ball), not where he is now
     const rx = p.x - d.x, rz = p.z - d.z, rl = Math.hypot(rx, rz) || 1, fit = Math.min(0.9, rl*0.5);
     const ax = d.x + rx/rl*fit, az = d.z + rz/rl*fit;
@@ -2152,20 +2187,20 @@ function autoPath(g, p, dt, t){
 // fight for yards: a tackle near the line turns into a pile you can push with fast knees and a low shoulder
 function startPile(d, t){
   const g = game, p = g.p;
-  const deep = mode === "body" ? (p.depth || 0) >= 0.35 : t - p.lastShoulder < 0.6;   // hit the pile low (hip drop of 0.35 torso lengths): churning alone can break you out
+  const deep = mode === "body" ? (p.depth || 0) >= 0.3 : t - p.lastShoulder < 0.6;   // hit the pile low (hip drop of 0.35 torso lengths): churning alone can break you out
   g.pile = {t: 0, dur: 2.4, start: p.z, d, gained: 0, deep, power: deep && mode === "body" ? 0.3*clamp((p.depth - 0.35)/0.2, 0, 1) : 0};
   p.speed = 0; sfx.hit(); g.shake = 0.5; crowd(0.3, 2.2);
   banner("Fight for yards!", "Keep those knees driving!", 1.6);
 }
 function updatePile(dt, t){
   const g = game, p = g.p, pl = g.pile;
-  const sps = stepsPerSec(t), low = t - p.lastShoulder < 1.5 || (mode === "body" && BodyCore.state.stance > 0.55);
+  const sps = stepsPerSec(t), low = t - p.lastShoulder < 1.5 || (mode === "body" && BodyCore.state.depth >= truckMin());
   pl.t += dt;
   const drive = Math.max(0, sps - 1.5)*0.65*(low ? 1.4 : 1)*(1 - pl.t/pl.dur);   // about 3 yards for fast knees and a low shoulder
   p.z += drive*dt; pl.gained = p.z - pl.start;
   // beast mode: stay low, churn fast enough for long enough, and you burst out the other side of the pile, still running
-  if (low || pl.deep) pl.power = (pl.power || 0) + Math.max(0, sps - 3.2)*dt;   // the shoulder down now, or you hit the pile in a deep squat; and the knees churning
-  if (pl.power > 1.1 && pl.t < pl.dur){
+  if (low || pl.deep) pl.power = (pl.power || 0) + Math.max(0, sps - 2.6)*dt;   // the shoulder down now, or you hit the pile in a deep squat; and the knees churning
+  if (pl.power > 1.0 && pl.t < pl.dur){
     if (pl.d){ pl.d.state = "down"; pl.d.vx = rand(-2, 2); pl.d.vz = 2; }
     g.pile = null; p.speed = 5.5; p.lastShoulder = -9; g.stats.broken++; sfx.pads(); g.shake = 0.6; crowd(0.4, 2);
     banner("Beast mode!", "Out the other side!", 1.2); announce("truck", {chance: 0.7}); return;
@@ -2419,7 +2454,7 @@ function updateLive(dt, t){
   }
   // a lowered shoulder stays lowered for the next 2.5 yards (or 1.5 s), so you don't have to time it to the hit.
   // In body play, running low in a squat keeps it lowered.
-  if (mode === "body" && BodyCore.state.stance > 0.55 && now() - lastHop > 0.6){ input.shoulder = true; input.shoulderT = t; }
+  if (mode === "body" && BodyCore.state.depth >= truckMin() && now() - lastHop > 0.6){ p.lowFor = (p.lowFor || 0) + dt; if (p.lowFor > 0.2){ input.shoulder = true; input.shoulderT = t; } } else p.lowFor = 0;   // held low a beat
   if (input.shoulder){ p.lastShoulder = input.shoulderT ?? t; p.lowerZ = p.z + 2.5; p.dip = 1; }
   if (t - p.lastShoulder < 1.5 && p.z <= (p.lowerZ ?? -99)) p.dip = Math.max(p.dip, 0.8);
   if (input.stiff){ p.lastStiff = input.stiffT ?? t; p.stiffAnim = 1; p.stiffSide = input.stiffSide || 0; if (p.stiffSide) p.ballSide = -p.stiffSide; }   // the ball moves to the arm away from the stiff arm
@@ -2478,7 +2513,7 @@ function updateLive(dt, t){
   // ends of the play
   if (p.z >= g.ballOn){ p.z = g.ballOn; endPlay("td"); return; }
   if (Math.abs(p.x) > FH){ endPlay("out"); return; }
-  if (p.stall > 3.5){ sfx.hit(); endPlay("tackle", "Hit in the backfield. Keep those knees moving."); }
+  if (p.stall > 3.5){ sfx.hit(); endPlay("tackle", "Stopped in the backfield."); }
 }
 
 /* ============ route running ============ */
@@ -2558,7 +2593,7 @@ function updateRoute(dt, t){
   cov.anim += dt*8;
   if (t < rt.freezeUntil){ cov.x += cov.vx*dt*0.6; cov.z += cov.vz*dt*0.6; }
   else {
-    const lx = laggedX(p, 0.3, t), tx = lx - pl.dir*0.3, tz = p.z + 1.0;
+    const lx = laggedX(p, 0.3, t), tx = pl.dir === 0 ? lx - Math.sign(pl.slotX || 1)*0.7 : lx - pl.dir*0.3, tz = pl.dir === 0 ? p.z - 0.8 : p.z + 1.0;   // on the seam he trails, not in your path
     const dx = tx - cov.x, dz = tz - cov.z, dist = Math.hypot(dx, dz) || 1, sp = Math.min(dist*4, 6.3 + d*0.6);
     cov.vx = dx/dist*sp; cov.vz = dz/dist*sp; cov.x += cov.vx*dt; cov.z += cov.vz*dt;
   }
@@ -2586,7 +2621,7 @@ function updateRoute(dt, t){
   // the catch call waits out the camera delay
   if (rt.arriveAt != null && t >= rt.arriveAt + L + 0.15){
     g.stats.targets++;
-    if (rt.broke == null) return endRoute(rt.wrong ? "You broke the wrong way." : rt.cueAt == null ? "Too slow to the cone." : "You never made your break.");
+    if (rt.broke == null) return endRoute(rt.wrong ? "You broke the wrong way." : rt.cueAt == null ? "The ball came before you reached the cone." : "You never made your break.");
     const sep = Math.hypot(cov.x - p.x, cov.z - p.z);
     const hands = rt.screen ? rt.handsT >= rt.arriveAt - 0.9 && rt.handsT <= rt.arriveAt + 0.4 : rt.handsT >= rt.arriveAt - 0.4 && rt.handsT <= rt.arriveAt + 0.2;
     const chance = rt.screen ? (hands ? 0.97 : 0.6) : hands ? (sep > 1.6 ? 0.95 : sep > 0.9 ? 0.75 : 0.4) : (sep > 1.6 ? 0.2 : 0.08);   // a screen is a soft lob
@@ -2865,7 +2900,7 @@ function update(dt){
     g.deadT = (g.deadT || 0) + dt;
     if (g.bigPlay && !g.replay && g.deadT > 1.2){ g.bigPlay = false; g.replay = {f: g.rec, t: 0, dur: Math.min(6, g.rec.length/15)}; banner("", "", 0.01); announce("replay", {force: true, delay: 0.4}); }
     if (g.replay){ g.replay.t += dt*0.7; g.t = Math.max(g.t, 0.4); if (g.replay.t >= g.replay.dur) g.replay = null; }
-    for (const d of g.defenders){ if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
+    for (const d of g.defenders){ if (d.state === "down" || d.state === "resolved") d.downT = (d.downT || 0) + dt; if (d.state === "down"){ d.x += d.vx*dt; d.z += d.vz*dt; d.vx *= Math.exp(-4*dt); d.vz *= Math.exp(-4*dt); } }
     if (g.t <= 0) afterPlay();
   } else if (g.phase === "opp"){
     if (g.lead && g.leadIn > 0){ g.leadIn -= dt; if (g.leadIn <= 0){ const L = g.lead; sfx.kick(); banner(L.big, L.small, 3); say(L.say, true);
@@ -3638,9 +3673,11 @@ const R3 = (() => {
     f.root.visible = true; f.root.position.set(o.x, 0, -o.z); f.root.rotation.y = o.face || 0;
     const {low, up, legs, arms} = f;
     if (o.down){
-      low.rotation.set(-Math.PI/2, 0, 0); low.position.set(0, 0.2, 0); up.rotation.x = 0;
-      for (const l of legs){ l.hip.rotation.x = 0; l.knee.rotation.x = 0; }
-      arms[0].sh.rotation.set(0, 0, -1.2); arms[1].sh.rotation.set(0, 0, 1.2); arms[0].el.rotation.x = arms[1].el.rotation.x = 0;
+      // the fall: over about a third of a second, knees buckle first, arms fly out, then flat on the turf
+      const k = ease(Math.min(1, (o.downT ?? 1)/0.35)), fl = Math.sin(Math.min(1, (o.downT ?? 1)/0.35)*Math.PI);
+      low.rotation.set(-Math.PI/2*k, 0, 0.25*fl); low.position.set(0, 0.2*k - 0.25*fl, 0); up.rotation.x = 0.4*fl;
+      for (const l of legs){ l.hip.rotation.x = -0.6*fl; l.knee.rotation.x = 1.0*fl; }
+      arms[0].sh.rotation.set(-0.8*fl, 0, -1.2 - 0.6*fl); arms[1].sh.rotation.set(-0.8*fl, 0, 1.2 + 0.6*fl); arms[0].el.rotation.x = arms[1].el.rotation.x = -0.5*fl;
       f.shadow.scale.set(1.3, 2.2, 1); return;
     }
     f.shadow.scale.set(1, 1, 1);
@@ -3809,7 +3846,7 @@ const R3 = (() => {
       if (q && !pre) put("home", 7, {x: q.x, z: q.z, face: q.face, fixedFace: true, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach}, q, Math.PI);
       for (const d of g.defenders){
         const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
-        put("away", d.num, {x: d.x, z: d.z, down, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" || d.engaged ? 0.8 : 0}, d, 0);
+        put("away", d.num, {x: d.x, z: d.z, down, downT: d.downT, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" || d.engaged ? 0.8 : 0}, d, 0);
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
