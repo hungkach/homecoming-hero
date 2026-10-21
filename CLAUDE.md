@@ -19,7 +19,7 @@ In this game: steps weigh by the thigh angle itself (30 to 70 degrees, `addStep(
 
 ## Rules
 
-- Everything the game needs lives in `index.html`. No build step, no extra runtime files. Scripts load only from CDNs.
+- Everything the game needs lives in `index.html`. No build step. Scripts load only from CDNs. The one exception Mark approved: player model files (`.glb`, CC0 or similarly free) in `models/`, loaded through the jsdelivr GitHub CDN (see `models/README.md`); the procedural players stay as the fallback.
 - The shared tracking code is the `body core v0.7` `<script>` block, between its start and end markers. Keep it free of game globals so it can be copied into other games (Stomp City, Downhill, a wrestling game, a vigilante game). If you change the core, bump the version in both markers and in `VERSION`.
 - Touch play must keep working in every build. It's how Mark tests on his phone, and it must behave the same unless a change is meant for touch.
 - One commit per feature, pushed to `main`. Update the build stamp at the bottom of the start screen (`buildStamp`) with the date and a word or two about the latest change, so Mark can tell when Safari is showing an old copy. Pages redeploys in a minute or two, and Mark refreshes the link.
