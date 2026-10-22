@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 22, mannequin football players</p>
+    <p class="diag" id="buildStamp">Build: Oct 22, adult sizes and lineman builds</p>
   </div>
 </div>
 
@@ -1982,8 +1982,8 @@ const ease = u => u <= 0 ? 0 : u >= 1 ? 1 : u*u*(3 - 2*u);
 // where your eyes are before the snap: in the huddle, walking up, then a look left and right
 function preSnapCam(g, c){
   const ps = preSnap(g), p = g.p, home = {x: HUDDLE.x, z: HUDDLE.z - HUDDLE.r - 0.2};
-  if (ps.stage === "huddle"){ c.x = home.x; c.z = home.z; c.h = 1.62; }
-  else if (ps.stage === "lineup"){ const k = ease(ps.u); c.x = lerp(home.x, p.x, k); c.z = lerp(home.z, p.z - 0.2, k); c.h = 1.62 + 0.13*k + Math.abs(Math.sin(ps.u*Math.PI*5))*0.04; }
+  if (ps.stage === "huddle"){ c.x = home.x; c.z = home.z; c.h = 1.72; }
+  else if (ps.stage === "lineup"){ const k = ease(ps.u); c.x = lerp(home.x, p.x, k); c.z = lerp(home.z, p.z - 0.2, k); c.h = 1.72 + 0.13*k + Math.abs(Math.sin(ps.u*Math.PI*5))*0.04; }
   else if (ps.stage === "survey"){
     const u = ps.u, look = 0.55;
     c.yaw = u < 0.3 ? -look*ease(u/0.3) : u < 0.7 ? lerp(-look, look, ease((u - 0.3)/0.4)) : look*(1 - ease((u - 0.7)/0.3));
@@ -2921,7 +2921,7 @@ function recordPlay(g, dt){
   if (g.playType !== "run" || !g.rec) return;
   g.recT += dt; if (g.recT < 1/15) return; g.recT = 0;
   const p = g.p, m = g.pile ? "pile" : p.stiffAnim > 0.3 ? "stiff" : p.dip > 0.5 ? "truck" : "";   // the move, for the replay's runner
-  g.rec.push({p: {x: p.x, z: p.z, m}, d: g.defenders.map(d => ({x: d.x, z: d.z, num: d.num, down: d.state === "down"})), b: (g.blockers || []).map(b => ({x: b.x, z: b.z, num: b.num, eng: !!b.engaged}))});
+  g.rec.push({p: {x: p.x, z: p.z, m}, d: g.defenders.map(d => ({x: d.x, z: d.z, num: d.num, type: d.type, down: d.state === "down"})), b: (g.blockers || []).map(b => ({x: b.x, z: b.z, num: b.num, eng: !!b.engaged}))});
 }
 function replayFrame(r){
   const k = Math.min(r.t*15, r.f.length - 1.001), i = Math.floor(k), u = k - i, A = r.f[i], B = r.f[i + 1] || A;
@@ -2945,7 +2945,7 @@ function camState(in3D){
   const dip = (p.dip || 0)*0.55;
   const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
   const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
-  const c = {x: p.x, z: p.z - 0.2, h: 1.75 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
+  const c = {x: p.x, z: p.z - 0.2, h: 1.85 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
   if (in3D && g && g.replay) return replayCam(c, g.replay);
   if (g && g.ball && (g.playType === "pass" || (g.playType === "route" && !g.ball.caught)) && (g.phase === "live" || g.phase === "dead")){
     const b = g.ball, u = clamp((now() - b.t0)/b.dur, 0, 1.2), bx = lerp(b.x0, b.x1, Math.min(u, 1)), bz = lerp(b.z0, b.z1, Math.min(u, 1));
@@ -3956,8 +3956,19 @@ const R3 = (() => {
      plain materials become vertex colors by body part: jersey, pants, socks, skin, gloves and cleats, one
      set per team and skin tone. The helmet (shell, facemask, stripe), shoulder pads and numbers ride on the
      head and chest bones. UAL1 alone is enough to play; UAL2's clips join when they arrive. */
-  const UAL = {ready: false, failed: "", geos: {}, pool: [], used: 0, fit: null, mat: null};
-  const UAL_POOL = 34, UAL_SKIN = [0xc68c62, 0x7a4b2e];
+  const UAL = {ready: false, failed: "", geos: {}, shapes: {}, fits: {}, pools: {line: [], big: [], rb: [], skill: []}, used: {}, mat: null};
+  const UAL_SKIN = [0xc68c62, 0x7a4b2e];
+  // body builds, as radial thickness around each bone (chest and hips: side to side, front, back), plus wider shoulders
+  // and hips. line: 6'4" 310 lb linemen; big: tight ends and linebackers; rb: a thick-legged back (and the QB); skill: receivers and DBs
+  const UAL_BUILDS = {
+    line:  {chest: [1.4, 1.45, 1.3], belly: 1.45, hips: [1.38, 1.4, 1.4], neck: 1.5, clav: 1.4, arm: 1.42, fore: 1.3, thigh: 1.45, calf: 1.3, sh: 1.17, hip: 1.12, pool: 13},
+    big:   {chest: [1.24, 1.26, 1.16], belly: 1.1, hips: [1.18, 1.2, 1.2], neck: 1.32, clav: 1.25, arm: 1.3, fore: 1.2, thigh: 1.28, calf: 1.18, sh: 1.1, hip: 1.05, pool: 10},
+    rb:    {chest: [1.16, 1.18, 1.1], belly: 1.0, hips: [1.15, 1.18, 1.2], neck: 1.25, clav: 1.15, arm: 1.22, fore: 1.14, thigh: 1.3, calf: 1.2, sh: 1.06, hip: 1.05, pool: 4},
+    skill: {chest: [1.08, 1.1, 1.05], belly: 1.0, hips: [1.05, 1.06, 1.08], neck: 1.15, clav: 1.08, arm: 1.12, fore: 1.08, thigh: 1.15, calf: 1.1, sh: 1.03, hip: 1.0, pool: 12}};
+  // listed heights in inches by position (the world is in yards)
+  const UAL_HEIGHT = {OL: 77, DL: 76, TE: 77, LB: 74, COV: 73, QB: 75, RB: 71, WR: 74, DB: 72};
+  const UAL_BUILD_OF = {OL: "line", DL: "line", TE: "big", LB: "big", COV: "big", QB: "rb", RB: "rb", WR: "skill", DB: "skill"};
+  const UAL_NEXT = {line: "big", big: "line", rb: "skill", skill: "rb"};   // a borrowed body when a pool runs out
   function ualRegion(n, x, y){
     if (/^(Head|neck)/.test(n)) return "skin";
     if (/thumb|index|middle|ring|pinky|hand/.test(n)) return "glove";
@@ -3970,9 +3981,36 @@ const R3 = (() => {
     if (/foot|ball/.test(n)) return "cleat";
     return "jersey";
   }
-  // one color attribute per team and skin tone; the rest of the geometry is shared
-  function ualGeo(team, tone){
-    const key = team + tone; if (UAL.geos[key]) return UAL.geos[key];
+  // a build's bind-pose shape: each vertex pushed out from its bones' axes, blended by skin weight
+  function ualShape(build){
+    if (UAL.shapes[build]) return UAL.shapes[build];
+    const a = KIT.assets.UAL, B = UAL_BUILDS[build], src = a.body, pos = src.attributes.position.array, si = src.attributes.skinIndex.array, sw = src.attributes.skinWeight.array;
+    const names = a.joints.map(j => a.J.nodes[j].name), at = names.map((_, k) => new T.Vector3().setFromMatrixPosition(a.inverses[k].clone().invert()));
+    const idx = n => names.indexOf(n), CHILD = {pelvis: "spine_01", spine_01: "spine_02", spine_02: "spine_03", spine_03: "neck_01", neck_01: "Head"};
+    for (const s of ["l", "r"]) Object.assign(CHILD, {["clavicle_" + s]: "upperarm_" + s, ["upperarm_" + s]: "lowerarm_" + s, ["lowerarm_" + s]: "hand_" + s, ["thigh_" + s]: "calf_" + s, ["calf_" + s]: "foot_" + s});
+    const seg = names.map(n => CHILD[n] ? idx(CHILD[n]) : -1);
+    const fac = n => /^spine_0[123]$/.test(n) ? "chest" : n === "pelvis" ? "hips" : /^neck/.test(n) ? "neck" : /clavicle/.test(n) ? "clav" : /upperarm/.test(n) ? "arm" : /lowerarm/.test(n) ? "fore" : /thigh/.test(n) ? "thigh" : /calf/.test(n) ? "calf" : "";
+    const facs = names.map(fac), out = Float32Array.from(pos), v = new T.Vector3(), d = new T.Vector3(), q = new T.Vector3(), ab = new T.Vector3();
+    for (let i = 0; i < pos.length/3; i++){
+      v.fromArray(pos, i*3); let ox = 0, oy = 0, oz = 0;
+      for (let k = 0; k < 4; k++){
+        const w = sw[i*4 + k], b = si[i*4 + k], f = facs[b]; if (!w || !f || seg[b] < 0) continue;
+        const A = at[b], C = at[seg[b]]; ab.subVectors(C, A);
+        const u = clamp(d.subVectors(v, A).dot(ab)/ab.lengthSq(), 0, 1); q.copy(A).addScaledVector(ab, u); d.subVectors(v, q);
+        if (f === "chest" || f === "hips"){
+          const [fx, ff, fb] = B[f];
+          // the belly: extra out front, low on the trunk
+          const belly = d.z > 0 ? 1 + (B.belly - 1)*clamp(1 - Math.abs(v.y - 1.06)/0.16, 0, 1) : 1;
+          ox += w*d.x*(fx - 1); oz += w*d.z*((d.z > 0 ? ff*belly : fb) - 1);
+        } else { const m = B[f] - 1; ox += w*d.x*m; oy += w*d.y*m; oz += w*d.z*m; }
+      }
+      out[i*3] += ox; out[i*3 + 1] += oy; out[i*3 + 2] += oz;
+    }
+    return UAL.shapes[build] = new T.BufferAttribute(out, 3);
+  }
+  // one geometry per build, team and skin tone; skinning and the index are shared
+  function ualGeo(build, team, tone){
+    const key = build + team + tone; if (UAL.geos[key]) return UAL.geos[key];
     const a = KIT.assets.UAL, src = a.body, pos = src.attributes.position.array, si = src.attributes.skinIndex.array, sw = src.attributes.skinWeight.array, mt = src.userData.mat;
     const home = team === "home", pal = {jersey: home ? COL.home : COL.away, pants: home ? 0xf2f2ee : 0xd9d2c2, sock: home ? COL.home : 0xf2e6d0,
       skin: UAL_SKIN[tone], glove: home ? 0xf4f4f4 : 0x1b1b1b, cleat: 0x151515}, C = {};
@@ -3988,21 +4026,20 @@ const R3 = (() => {
     for (let v = 0; v < pos.length/3; v++){ const c = C[a.region[v]], k = mt[v] ? 0.8 : 1; col[v*3] = c.r*k; col[v*3 + 1] = c.g*k; col[v*3 + 2] = c.b*k; }   // the joint rings a shade darker
     const g = new T.BufferGeometry();
     for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
-    g.setAttribute("color", new T.BufferAttribute(col, 3)); g.setIndex(src.index); g.boundingBox = src.boundingBox;
+    g.setAttribute("position", ualShape(build)); g.setAttribute("color", new T.BufferAttribute(col, 3)); g.setIndex(src.index); g.computeBoundingBox();
     return UAL.geos[key] = g;
   }
-  // where the gear goes, measured once from the bind pose: the head's middle and size, the chest's front and back
-  function ualFit(){
-    if (UAL.fit) return UAL.fit;
-    const a = KIT.assets.UAL, pos = a.body.attributes.position.array, head = new T.Box3(), chest = {f: -9, b: 9};
-    ualGeo("home", 0);
+  // where the gear goes, measured from a build's bind pose: the head's middle and size, the chest's front and back
+  function ualFit(build){
+    if (UAL.fits[build]) return UAL.fits[build];
+    const a = KIT.assets.UAL, pos = ualGeo(build, "home", 0).attributes.position.array, head = new T.Box3(), chest = {f: -9, b: 9};
     for (let v = 0; v < pos.length/3; v++){
       const x = pos[v*3], y = pos[v*3 + 1], z = pos[v*3 + 2], n = a.region[v];
       if (n === "skin" && y > 1.55) head.expandByPoint(new T.Vector3(x, y, z));
-      if (n === "jersey" && Math.abs(x) < 0.06 && y > 1.22 && y < 1.36){ chest.f = Math.max(chest.f, z); chest.b = Math.min(chest.b, z); }
+      if (n === "jersey" && Math.abs(x) < 0.12 && y > 1.2 && y < 1.4){ chest.f = Math.max(chest.f, z); chest.b = Math.min(chest.b, z); }
     }
     const c = head.getCenter(new T.Vector3()), sz = head.getSize(new T.Vector3());
-    return UAL.fit = {head: c, headR: Math.max(sz.x, sz.z)/2, top: head.max.y, chest};
+    return UAL.fits[build] = {head: c, headR: Math.max(sz.x, sz.z)/2, top: head.max.y, chest};
   }
   // gear built in the bind pose, then handed to a bone so it follows the animation
   function ualAttach(inst, boneName, mesh, x, y, z, s = 1, ry = 0){
@@ -4011,29 +4048,35 @@ const R3 = (() => {
     m.premultiply(bone.matrixWorld.clone().invert()).decompose(mesh.position, mesh.quaternion, mesh.scale);
     bone.add(mesh); return mesh;
   }
-  function ualInstance(){
+  function ualInstance(build){
     if (!UAL.mat) UAL.mat = new T.MeshLambertMaterial({vertexColors: true});
-    const inst = kitInstance("UAL", UAL.mat), F = ualFit(), h = F.head, s = F.headR*1.45/0.21;
-    inst.root.updateMatrixWorld(true);
+    const B = UAL_BUILDS[build], tone = Math.random() < 0.5 ? 0 : 1;
+    const inst = kitInstance("UAL", UAL.mat), F = ualFit(build), h = F.head, s = F.headR*1.36/0.21;
+    inst.skinned.geometry = ualGeo(build, "home", tone);
     inst.rig.scale.setScalar(1); inst.root.updateMatrixWorld(true);
     // the helmet: the procedural players' shell, facemask and stripe, sized to the head
     const helm = new T.Group(), shell = new T.Mesh(G.helmet, M.helmHome); shell.scale.set(1, 1.05, 1.12);
     const mask = new T.Mesh(G.mask, M.mask), stripe = new T.Mesh(G.stripe, M.gold); helm.add(shell, mask, stripe);
     ualAttach(inst, "Head", helm, h.x, h.y + 0.012, h.z + 0.008, s);
     // shoulder pads under the jersey, and the numbers front and back
-    const pads = ualAttach(inst, "spine_03", new T.Mesh(G.pads, M.home), 0, 1.43, -0.01, 0.62);
-    const ch = F.chest, numF = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.28, ch.f + 0.012, 0.62);
-    const numB = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.3, ch.b - 0.012, 0.66, Math.PI);
-    pads.scale.y *= 1.1;
-    inst.rig.scale.setScalar(KIT_HEIGHT/KIT.assets.UAL.height*0.95);
+    const ch = F.chest, ps = 0.62*B.clav;
+    const pads = ualAttach(inst, "spine_03", new T.Mesh(G.pads, M.home), 0, 1.43, -0.01, ps);
+    const numF = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.27, ch.f + 0.02, 0.62*B.chest[0]);
+    const numB = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.3, ch.b - 0.02, 0.78*B.chest[0], Math.PI);
+    pads.scale.y *= 0.8; pads.scale.z *= 0.92; pads.scale.x *= B.sh;   // flatter and wide, like pads under a jersey
+    // wider shoulders and hips: the arm and leg bones sit farther out (clips only turn them, so this stays)
+    for (const s2 of ["l", "r"]){
+      const ua = inst.rig.getObjectByName("upperarm_" + s2), th = inst.rig.getObjectByName("thigh_" + s2);
+      if (ua) ua.position.multiplyScalar(B.sh); if (th) th.position.multiplyScalar(B.hip);
+    }
     const shadow = new T.Mesh(G.shadow, M.shadow); shadow.rotation.x = -Math.PI/2; shadow.position.y = 0.03; inst.root.add(shadow);
-    Object.assign(inst, {shell, mask, stripe, pads, numF, numB, num: -1, tone: Math.random() < 0.5 ? 0 : 1, busy: 0, fold: Math.random() < 0.3});
+    Object.assign(inst, {build, shell, mask, stripe, pads, numF, numB, num: -1, tone, busy: 0, fold: Math.random() < 0.3});
     return inst;
   }
   async function loadUAL(){
     try{
       KIT.assets.UAL = await kitParse(await kitFetch("UAL1_Standard"), {slim: true});
-      for (let i = 0; i < UAL_POOL; i++) UAL.pool.push(ualInstance());
+      for (const b in UAL_BUILDS) for (let i = 0; i < UAL_BUILDS[b].pool; i++) UAL.pools[b].push(ualInstance(b));
       UAL.ready = true; info.models = "ual";
       // the second library: more clips on the same rig; play goes on without them
       try{ Object.assign(KIT.assets.UAL.clips, (await kitParse(await kitFetch("UAL2_Standard"), {slim: true, clipsOnly: true})).clips); info.models = "ual+2"; }catch(e){}
@@ -4042,16 +4085,27 @@ const R3 = (() => {
   function ualDress(inst, team, num){
     if (inst.team !== team){
       const home = team === "home";
-      inst.skinned.geometry = ualGeo(team, inst.tone);
+      inst.skinned.geometry = ualGeo(inst.build, team, inst.tone);
       inst.shell.material = home ? M.helmHome : M.helmAway; inst.stripe.material = home ? M.gold : M.black;
       inst.pads.material = home ? M.home : M.away; inst.team = team; inst.num = -1;
     }
     if (inst.num !== num){ inst.numF.material = inst.numB.material = numMat(num, team); inst.num = num; }
   }
+  // the position, from what the caller says, or from the number
+  function ualPos(team, num, o){
+    if (o.pos && UAL_HEIGHT[o.pos]) return o.pos;
+    if (team === "home") return num >= 50 && num < 80 ? "OL" : num >= 80 && num < 90 ? "TE" : num === 7 ? "QB" : num >= 20 && num < 40 ? "RB" : "WR";
+    return num >= 90 ? "DL" : num >= 40 && num < 60 ? "LB" : "DB";
+  }
   const UAL_LEN = n => { const c = KIT.assets.UAL.clips[n]; return c ? c.duration : 0; };
   function ualPut(team, num, o, key, dt){
-    const inst = UAL.pool[UAL.used++]; if (!inst) return;
+    const pos = ualPos(team, num, o); let b = UAL_BUILD_OF[pos];
+    if ((UAL.used[b] || 0) >= UAL.pools[b].length) b = UAL_NEXT[b];
+    const inst = UAL.pools[b][UAL.used[b] = (UAL.used[b] || 0) + 1, UAL.used[b] - 1]; if (!inst) return;
     ualDress(inst, team, num);
+    // listed height, give or take an inch and a half by number
+    const inches = UAL_HEIGHT[pos] + ((num*37) % 7 - 3)*0.5;
+    inst.rig.scale.setScalar(inches/36/KIT.assets.UAL.height);
     inst.root.visible = true; inst.root.position.set(o.x, 0, -o.z); inst.root.rotation.y = o.face || 0;
     const spd = o.spd ?? (o.run || 0)*6, has = n => !!KIT.assets.UAL.clips[n];
     inst.busy = Math.max(0, inst.busy - dt);
@@ -4065,7 +4119,7 @@ const R3 = (() => {
     else if ((o.reach || 0) >= 0.6) kitPlay(inst, "Push_Loop");
     else if (spd > 4.6) kitPlay(inst, "Sprint_Loop", {speed: clamp(spd/7, 0.7, 1.5)});
     else if (spd > 1.2) kitPlay(inst, "Jog_Fwd_Loop", {speed: clamp(spd/3.6, 0.6, 1.4)});
-    else if ((o.crouch || 0) >= 0.5) kitPlay(inst, "Crouch_Idle_Loop");
+    else if ((o.crouch || 0) >= (pos === "DL" ? 0.3 : 0.5)) kitPlay(inst, "Crouch_Idle_Loop");   // linemen get down in a stance
     else kitPlay(inst, o.idle && inst.fold && has("Idle_FoldArms_Loop") ? "Idle_FoldArms_Loop" : "Idle_Loop");
     inst.mixer.update(dt);
   }
@@ -4093,7 +4147,7 @@ const R3 = (() => {
   function placePlayers(t, dt){
     const g = game; let n = 0;
     if (KIT.ready) KIT.used = {};
-    UAL.used = 0;
+    UAL.used = {};
     const put = (team, num, o, key, home = 0) => {
       const oo = key != null && !o.down ? motion(key, o, home, dt) : o;
       if (UAL.ready){ ualPut(team, num, oo, key, dt); return; }   // the football mannequins, once they've loaded
@@ -4103,9 +4157,9 @@ const R3 = (() => {
     if (g && g.replay){
       // the replay: you, your blockers, and their defense, as recorded
       const F = replayFrame(g.replay);
-      put("home", 22, {x: F.p.x, z: F.p.z, run: 0, anim: t*8, crouch: 0.1, reach: F.p.m === "pile" ? 0.8 : 0, mv: F.p.m}, "rpRB", Math.PI);
+      put("home", 22, {x: F.p.x, z: F.p.z, run: 0, anim: t*8, crouch: 0.1, reach: F.p.m === "pile" ? 0.8 : 0, mv: F.p.m, pos: "RB"}, "rpRB", Math.PI);
       F.b.forEach((b, i) => put("home", b.num, {x: b.x, z: b.z, run: 0, anim: t*6 + i, crouch: b.eng ? 0.45 : 0.15, reach: b.eng ? 0.8 : 0}, "rpB" + i, Math.PI));
-      F.d.forEach((d, i) => put("away", d.num, {x: d.x, z: d.z, down: d.down, run: 0, anim: t*6 + i, crouch: 0.15, reach: 0}, "rpD" + i, 0));
+      F.d.forEach((d, i) => put("away", d.num, {x: d.x, z: d.z, down: d.down, pos: d.type, run: 0, anim: t*6 + i, crouch: 0.15, reach: 0}, "rpD" + i, 0));
       for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
       return;
     }
@@ -4117,32 +4171,32 @@ const R3 = (() => {
       if (g.blockers && !pre) for (const b of g.blockers){
         // run blocking: blockers drawn where they are, arms out when locked on
         put("home", b.num, {x: b.x, z: b.z, face: b.engaged ? Math.atan2(b.drive.x, -b.drive.z) + Math.PI : undefined, fixedFace: !!b.engaged,
-          crouch: b.engaged ? 0.45 : 0.15, run: 0, anim: b.anim || 0, reach: b.engaged && !cel ? 0.8 : 0, cel}, "blk" + b.key, Math.PI);
+          crouch: b.engaged ? 0.45 : 0.15, run: 0, anim: b.anim || 0, reach: b.engaged && !cel ? 0.8 : 0, cel, pos: b.kind}, "blk" + b.key, Math.PI);
       }
       if (g.offense) for (const o of g.offense){
         // before the snap everyone comes from the offense list; after it, only the receivers, tight end, and a shotgun QB
         if (!pre && (o.kind === "OL" || (o.kind === "QB" && g.qb) || (g.blockers && o.kind !== "QB" && g.blockers.some(b => b.kind === o.kind)))) continue;
         const inHuddle = stage === "huddle", set = !inHuddle && stage !== "lineup";
         put("home", o.num, {x: o.x, z: o.z, face: o.face ?? undefined, fixedFace: o.face != null && (inHuddle || set), crouch: inHuddle ? 0.3 : set && o.kind === "OL" ? 0.75 : set ? 0.35 : 0.1, run: 0, anim: t*6, reach: live && o.kind === "TE" ? 0.7 : 0,
-          idle: inHuddle, thr: o.kind === "QB" && !!g.ball && now() - g.ball.t0 < 0.5, cel: cel && o.kind !== "QB"}, "off" + o.key, Math.PI);
+          idle: inHuddle, pos: o.kind, thr: o.kind === "QB" && !!g.ball && now() - g.ball.t0 < 0.5, cel: cel && o.kind !== "QB"}, "off" + o.key, Math.PI);
       }
       if (!pre && !g.blockers) for (let i = 0; i < 5; i++){
         let x = slots[i]; if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
-        put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, fixedFace: true, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0}, "ol" + i, Math.PI);
+        put("home", 50 + i*7 % 30, {x, z: olZ - 0.3, face: Math.PI, fixedFace: true, crouch: live ? 0.45 : 0.75, run: live ? 0.25 : 0, anim: t*6 + i, reach: live ? 0.7 : 0, pos: "OL"}, "ol" + i, Math.PI);
       }
       if (g.playType !== "run") for (let i = 0; i < 4; i++){
         let x = -3 + i*2; if (Math.abs(x - hole) < 1.8) x += (x >= hole ? 1 : -1)*1.2*opened;
-        put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, fixedFace: true, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0}, "dl" + i, 0);
+        put("away", 90 + i, {x, z: dlZ + 0.3, face: 0, fixedFace: true, crouch: live ? 0.45 : 0.8, run: live ? 0.25 : 0, anim: t*6 + i*2, reach: live ? 0.7 : 0, pos: "DL"}, "dl" + i, 0);
       }
       const q = g.qb;
-      if (q && !pre) put("home", 7, {x: q.x, z: q.z, face: q.face, fixedFace: true, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach}, q, Math.PI);
+      if (q && !pre) put("home", 7, {x: q.x, z: q.z, face: q.face, fixedFace: true, run: q.run, anim: q.anim, crouch: g.phase === "live" ? 0.1 : 0.35, reach: q.reach, pos: "QB"}, q, Math.PI);
       for (const d of g.defenders){
         const down = d.state === "down" || (d.state === "resolved" && g.phase === "dead");
-        put("away", d.num, {x: d.x, z: d.z, down, downT: d.downT, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" || d.engaged ? 0.8 : 0}, d, 0);
+        put("away", d.num, {x: d.x, z: d.z, down, downT: d.downT, pos: d.type, run: live ? 0.2 : 0, anim: d.anim, crouch: d.crouch ?? (live ? 0.15 : 0.35), reach: d.state === "engaged" || d.state === "contact" || d.engaged ? 0.8 : 0}, d, 0);
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
-    for (let i = UAL.used; i < UAL.pool.length; i++) UAL.pool[i].root.visible = false;
+    for (const b in UAL.pools) UAL.pools[b].forEach((inst, i) => { if (i >= (UAL.used[b] || 0)) inst.root.visible = false; });
     if (KIT.ready) for (const nm of KIT_FILES) KIT.pools[nm].forEach((inst, i) => { if (i >= (KIT.used[nm] || 0)) inst.root.visible = false; });
   }
   // body tracking matters more than pixels: if detection slows down, render fewer pixels, then go back to 2D
