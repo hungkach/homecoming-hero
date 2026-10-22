@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 22, adult sizes and lineman builds</p>
+    <p class="diag" id="buildStamp">Build: Oct 22, three-point stance, tighter camera</p>
   </div>
 </div>
 
@@ -2943,7 +2943,7 @@ function camState(in3D){
   const g = game, p = g ? g.p : {x:0, z:-5, speed:0, bob:0, dip:0};
   const bob = Math.sin(p.bob)*0.07*Math.min(1, p.speed/4);
   const dip = (p.dip || 0)*0.55;
-  const portrait = W < H, fov = (portrait ? 84 : 70)*Math.PI/180;
+  const portrait = W < H, fov = (portrait ? 72 : 70)*Math.PI/180;   // portrait was 84: a fisheye that made players look small
   const look = g && g.phase === "live" && g.glance ? (g.glanceSide || 0)*0.3*ease(g.glance) : 0;   // a glance at the man coming from the side
   const c = {x: p.x, z: p.z - 0.2, h: 1.85 + bob - dip + (p.air || 0), F: (W/2)/Math.tan(fov/2), hor: H*(portrait ? 0.42 : 0.4) + dip*40, yaw: look};
   if (in3D && g && g.replay) return replayCam(c, g.replay);
@@ -4073,10 +4073,52 @@ const R3 = (() => {
     Object.assign(inst, {build, shell, mask, stripe, pads, numF, numB, num: -1, tone, busy: 0, fold: Math.random() < 0.3});
     return inst;
   }
+  // a three-point stance, posed bone by bone on a build's rig and baked into a one-frame clip: right hand down,
+  // flat back, head up, feet a little wider than the hips with the right foot back, the left forearm on the thigh
+  function ualStance(rig){
+    const V = (x, y, z) => new T.Vector3(x, y, z), get = n => rig.getObjectByName(n), wp = o => o.getWorldPosition(new T.Vector3());
+    const upd = () => rig.updateMatrixWorld(true);
+    upd();
+    const headQ = get("Head").getWorldQuaternion(new T.Quaternion());
+    const aim = (b, c, dir) => {   // turn bone b so its child c lies along dir
+      upd(); const d0 = wp(c).sub(wp(b)).normalize(), dq = new T.Quaternion().setFromUnitVectors(d0, dir.clone().normalize());
+      const qw = b.getWorldQuaternion(new T.Quaternion()), pq = b.parent.getWorldQuaternion(new T.Quaternion()).invert();
+      b.quaternion.copy(pq.multiply(dq.multiply(qw))); upd();
+    };
+    const setWorldQ = (b, q) => { upd(); b.quaternion.copy(b.parent.getWorldQuaternion(new T.Quaternion()).invert().multiply(q)); upd(); };
+    const ik = (a, b, c, target, pole) => {   // two bones reach for a target, bending toward the pole
+      upd(); const A = wp(a), l1 = wp(b).distanceTo(A), l2 = wp(c).distanceTo(wp(b)), t = target.clone().sub(A);
+      const d = Math.min(t.length(), (l1 + l2)*0.999), n = t.normalize(), x = (l1*l1 - l2*l2 + d*d)/(2*d), h = Math.sqrt(Math.max(0, l1*l1 - x*x));
+      const pp = pole.clone().addScaledVector(n, -pole.dot(n)).normalize(), E = A.clone().addScaledVector(n, x).addScaledVector(pp, h);
+      aim(a, b, E.clone().sub(A)); aim(b, c, A.clone().addScaledVector(n, d).sub(E));
+    };
+    const pelvis = get("pelvis"), hipY = 0.67, back = V(0, -0.05, 1);
+    pelvis.position.copy(pelvis.parent.worldToLocal(V(0, hipY, -0.12))); upd();
+    aim(pelvis, get("spine_01"), back); aim(get("spine_01"), get("spine_02"), back); aim(get("spine_02"), get("spine_03"), back.clone().add(V(0, 0.04, 0)));
+    aim(get("spine_03"), get("neck_01"), back.clone().add(V(0, 0.08, 0))); aim(get("neck_01"), get("Head"), V(0, 0.75, 0.66));
+    setWorldQ(get("Head"), new T.Quaternion().setFromEuler(new T.Euler(-0.15, 0, 0)).multiply(headQ));   // eyes up, looking across the line
+    // feet: left forward, right back (a right-handed stance), toes straight ahead
+    for (const [s, x, z] of [["l", 0.2, 0.12], ["r", -0.2, -0.08]]){
+      ik(get("thigh_" + s), get("calf_" + s), get("foot_" + s), V(x, 0.1, z), V(s === "l" ? 0.3 : -0.3, 0, 1));
+      aim(get("foot_" + s), get("ball_" + s), V(0, -0.35, 1));
+    }
+    // the down hand under the right shoulder, a little ahead; the off forearm across the left thigh
+    const shR = wp(get("upperarm_r")), knL = wp(get("calf_l"));
+    ik(get("upperarm_r"), get("lowerarm_r"), get("hand_r"), V(shR.x*0.85, 0.18, shR.z + 0.12), V(-0.2, 0, -1));
+    aim(get("hand_r"), get("middle_01_r"), V(0, -1, 0.15));
+    ik(get("upperarm_l"), get("lowerarm_l"), get("hand_l"), V(knL.x - 0.02, knL.y + 0.1, knL.z - 0.08), V(0.6, 0, -1));
+    upd();
+    // bake every bone's turn, and the pelvis's place, into a still clip
+    const tracks = [];
+    rig.traverse(o => { if (o.isBone) tracks.push(new T.QuaternionKeyframeTrack(o.name + ".quaternion", [0, 1], [...o.quaternion.toArray(), ...o.quaternion.toArray()])); });
+    tracks.push(new T.VectorKeyframeTrack("pelvis.position", [0, 1], [...pelvis.position.toArray(), ...pelvis.position.toArray()]));
+    return new T.AnimationClip("Stance3", 1, tracks);
+  }
   async function loadUAL(){
     try{
       KIT.assets.UAL = await kitParse(await kitFetch("UAL1_Standard"), {slim: true});
       for (const b in UAL_BUILDS) for (let i = 0; i < UAL_BUILDS[b].pool; i++) UAL.pools[b].push(ualInstance(b));
+      const tmp = ualInstance("line"); scene.remove(tmp.root); KIT.assets.UAL.clips.Stance3 = ualStance(tmp.rig);   // posed on a lineman's frame
       UAL.ready = true; info.models = "ual";
       // the second library: more clips on the same rig; play goes on without them
       try{ Object.assign(KIT.assets.UAL.clips, (await kitParse(await kitFetch("UAL2_Standard"), {slim: true, clipsOnly: true})).clips); info.models = "ual+2"; }catch(e){}
@@ -4119,7 +4161,8 @@ const R3 = (() => {
     else if ((o.reach || 0) >= 0.6) kitPlay(inst, "Push_Loop");
     else if (spd > 4.6) kitPlay(inst, "Sprint_Loop", {speed: clamp(spd/7, 0.7, 1.5)});
     else if (spd > 1.2) kitPlay(inst, "Jog_Fwd_Loop", {speed: clamp(spd/3.6, 0.6, 1.4)});
-    else if ((o.crouch || 0) >= (pos === "DL" ? 0.3 : 0.5)) kitPlay(inst, "Crouch_Idle_Loop");   // linemen get down in a stance
+    else if ((pos === "OL" || pos === "DL") && (o.crouch || 0) >= (pos === "DL" ? 0.3 : 0.5)) kitPlay(inst, "Stance3", {fade: 0.25});   // linemen get down in a three-point stance
+    else if ((o.crouch || 0) >= 0.5) kitPlay(inst, "Crouch_Idle_Loop");
     else kitPlay(inst, o.idle && inst.fold && has("Idle_FoldArms_Loop") ? "Idle_FoldArms_Loop" : "Idle_Loop");
     inst.mixer.update(dt);
   }
