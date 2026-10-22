@@ -150,7 +150,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 22, football players back</p>
+    <p class="diag" id="buildStamp">Build: Oct 22, mannequin football players</p>
   </div>
 </div>
 
@@ -2920,7 +2920,8 @@ function update(dt){
 function recordPlay(g, dt){
   if (g.playType !== "run" || !g.rec) return;
   g.recT += dt; if (g.recT < 1/15) return; g.recT = 0;
-  g.rec.push({p: {x: g.p.x, z: g.p.z}, d: g.defenders.map(d => ({x: d.x, z: d.z, num: d.num, down: d.state === "down"})), b: (g.blockers || []).map(b => ({x: b.x, z: b.z, num: b.num, eng: !!b.engaged}))});
+  const p = g.p, m = g.pile ? "pile" : p.stiffAnim > 0.3 ? "stiff" : p.dip > 0.5 ? "truck" : "";   // the move, for the replay's runner
+  g.rec.push({p: {x: p.x, z: p.z, m}, d: g.defenders.map(d => ({x: d.x, z: d.z, num: d.num, down: d.state === "down"})), b: (g.blockers || []).map(b => ({x: b.x, z: b.z, num: b.num, eng: !!b.engaged}))});
 }
 function replayFrame(r){
   const k = Math.min(r.t*15, r.f.length - 1.001), i = Math.floor(k), u = k - i, A = r.f[i], B = r.f[i + 1] || A;
@@ -3408,7 +3409,9 @@ const R3 = (() => {
     buildMaterials(); buildArrow(); buildBall(); buildCone(); buildFireworks();
     for (let i = 0; i < 28; i++) figs.push(makeFig());
     // rigged model players only with ?kaykit in the link (the KayKit pack is cartoon fantasy, so the football players stay the default)
-    if (typeof location !== "undefined" && /[?&]kaykit\b/.test(location.search || "")) loadKit();
+    // the football mannequins by default; ?classic keeps the procedural players
+    const q = typeof location !== "undefined" ? location.search || "" : "";
+    if (/[?&]kaykit\b/.test(q)) loadKit(); else if (!/[?&]classic\b/.test(q)) loadUAL();
     info.pr = pr;
   }
 
@@ -3804,7 +3807,7 @@ const R3 = (() => {
     m.yaw += wrap(want - m.yaw)*Math.min(1, dt*9);
     m.phase += spd*dt*2.7;
     const fwd = m.vx*Math.sin(m.yaw) - m.vz*Math.cos(m.yaw), side = m.vx*Math.cos(m.yaw) + m.vz*Math.sin(m.yaw);
-    o.face = m.yaw;
+    o.face = m.yaw; o.spd = spd;
     if (spd > 0.3){ o.amp = Math.min(0.85, spd*0.14); o.anim = m.phase; o.sf = fwd/spd; o.ss = side/spd; o.lean = 0.1 + 0.32*Math.min(1, spd/7); }
     return o;
   }
@@ -3825,7 +3828,7 @@ const R3 = (() => {
     }
     throw new Error(name + ".glb did not load");
   }
-  async function kitParse(buf){
+  async function kitParse(buf, opt = {}){
     const dv = new DataView(buf), jl = dv.getUint32(12, true);
     const J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl)));
     const binLen = dv.getUint32(20 + jl, true), bin = buf.slice(28 + jl, 28 + jl + binLen);
@@ -3834,16 +3837,34 @@ const R3 = (() => {
       if (v.byteStride && v.byteStride !== n*C.BYTES_PER_ELEMENT){ const out = new C(a.count*n), src = new DataView(bin), rd = {1: "getUint8", 2: "getUint16", 4: C === Float32Array ? "getFloat32" : "getUint32"}[C.BYTES_PER_ELEMENT];
         for (let k = 0; k < a.count; k++) for (let j = 0; j < n; j++) out[k*n + j] = src[rd](off + k*v.byteStride + j*C.BYTES_PER_ELEMENT, true); return out; }
       return new C(bin.slice(off, off + a.count*n*C.BYTES_PER_ELEMENT)); };
-    // the atlas texture
-    const im = J.images[0], iv = J.bufferViews[im.bufferView];
-    const img = new Image(); img.src = URL.createObjectURL(new Blob([new Uint8Array(bin, iv.byteOffset || 0, iv.byteLength)], {type: im.mimeType}));
-    await img.decode();
-    const tex = new T.Texture(img); tex.flipY = false; tex.colorSpace = T.SRGBColorSpace; tex.needsUpdate = true;
+    const clean = nm => T.PropertyBinding.sanitizeNodeName(nm);
+    const clips = {};
+    for (const an of J.animations || []){
+      const tracks = [];
+      for (const ch of an.channels){
+        const nm = J.nodes[ch.target.node].name, path = ch.target.path;
+        // slim clips (the mannequin): rotations, plus the root and pelvis moves; no scale keys
+        if (opt.slim && (path === "scale" || (path === "translation" && !/^(root|pelvis)$/.test(nm)))) continue;
+        const sm = an.samplers[ch.sampler], times = Float32Array.from(acc(sm.input)), vals = Float32Array.from(acc(sm.output));
+        const Tk = path === "rotation" ? T.QuaternionKeyframeTrack : T.VectorKeyframeTrack;
+        tracks.push(new Tk(clean(nm) + "." + {translation: "position", rotation: "quaternion", scale: "scale"}[path], times, vals));
+      }
+      clips[an.name] = new T.AnimationClip(an.name, -1, tracks);
+    }
+    if (opt.clipsOnly) return {clips};
+    // the atlas texture (the mannequin has none: plain material colors)
+    let tex = null;
+    if (J.images && J.images.length){
+      const im = J.images[0], iv = J.bufferViews[im.bufferView];
+      const img = new Image(); img.src = URL.createObjectURL(new Blob([new Uint8Array(bin, iv.byteOffset || 0, iv.byteLength)], {type: im.mimeType}));
+      await img.decode();
+      tex = new T.Texture(img); tex.flipY = false; tex.colorSpace = T.SRGBColorSpace; tex.needsUpdate = true;
+    }
     const geo = (prims, skinned) => {   // primitives of one or more meshes merged into one geometry
-      const P = [], Nn = [], U = [], Jt = [], Wt = [], I = []; let base = 0;
+      const P = [], Nn = [], U = [], Jt = [], Wt = [], I = [], Mt = []; let base = 0;
       for (const pr of prims){
         const a = pr.attributes, pos = acc(a.POSITION), cnt = pos.length/3;
-        P.push(pos); Nn.push(acc(a.NORMAL)); U.push(acc(a.TEXCOORD_0));
+        P.push(pos); Nn.push(acc(a.NORMAL)); U.push(a.TEXCOORD_0 != null ? acc(a.TEXCOORD_0) : new Float32Array(cnt*2)); Mt.push(new Uint8Array(cnt).fill(pr.material || 0));
         if (skinned){ Jt.push(Uint16Array.from(acc(a.JOINTS_0))); Wt.push(Float32Array.from(acc(a.WEIGHTS_0))); }
         const idx = pr.indices != null ? acc(pr.indices) : Uint32Array.from({length: cnt}, (_, k) => k);
         I.push(Uint32Array.from(idx, k => k + base)); base += cnt;
@@ -3852,26 +3873,15 @@ const R3 = (() => {
       const g = new T.BufferGeometry();
       g.setAttribute("position", new T.BufferAttribute(cat(P, Float32Array), 3)); g.setAttribute("normal", new T.BufferAttribute(cat(Nn, Float32Array), 3)); g.setAttribute("uv", new T.BufferAttribute(cat(U, Float32Array), 2));
       if (skinned){ g.setAttribute("skinIndex", new T.BufferAttribute(cat(Jt, Uint16Array), 4)); g.setAttribute("skinWeight", new T.BufferAttribute(cat(Wt, Float32Array), 4)); }
-      g.setIndex(new T.BufferAttribute(cat(I, Uint32Array), 1)); g.computeBoundingBox(); return g;
+      g.setIndex(new T.BufferAttribute(cat(I, Uint32Array), 1)); g.computeBoundingBox(); g.userData.mat = cat(Mt, Uint8Array); return g;
     };
     const skinNodes = J.nodes.map((n, i) => i).filter(i => J.nodes[i].mesh != null && J.nodes[i].skin != null);
     // the head's texture coordinates: the colors it uses (skin, hair, beard) keep their own color in team recoloring
-    const headUV = skinNodes.filter(i => /_head$/i.test(J.nodes[i].name)).flatMap(i => J.meshes[J.nodes[i].mesh].primitives.map(pr => acc(pr.attributes.TEXCOORD_0)));
+    const headUV = !tex ? [] : skinNodes.filter(i => /_head$/i.test(J.nodes[i].name)).flatMap(i => J.meshes[J.nodes[i].mesh].primitives.map(pr => acc(pr.attributes.TEXCOORD_0)));
     const body = geo(skinNodes.flatMap(i => J.meshes[J.nodes[i].mesh].primitives), true);
     const statics = {};
     J.nodes.forEach((n, i) => { if (n.mesh != null && n.skin == null && KIT_KEEP.test(n.name)) statics[i] = geo(J.meshes[n.mesh].primitives, false); });
     const skin = J.skins[0], ibm = acc(skin.inverseBindMatrices), inverses = skin.joints.map((_, k) => new T.Matrix4().fromArray(ibm, k*16));
-    const clean = nm => T.PropertyBinding.sanitizeNodeName(nm);
-    const clips = {};
-    for (const an of J.animations){
-      const tracks = [];
-      for (const ch of an.channels){
-        const sm = an.samplers[ch.sampler], node = clean(J.nodes[ch.target.node].name), times = Float32Array.from(acc(sm.input)), vals = Float32Array.from(acc(sm.output));
-        const Tk = ch.target.path === "rotation" ? T.QuaternionKeyframeTrack : T.VectorKeyframeTrack;
-        tracks.push(new Tk(node + "." + {translation: "position", rotation: "quaternion", scale: "scale"}[ch.target.path], times, vals));
-      }
-      clips[an.name] = new T.AnimationClip(an.name, -1, tracks);
-    }
     // the rest pose's height (head included); the instance scales it to a player
     return {J, tex, body, statics, inverses, clips, joints: skin.joints, clean, mats: {}, height: body.boundingBox.max.y, headUV};
   }
@@ -3894,7 +3904,7 @@ const R3 = (() => {
     const tex = new T.CanvasTexture(cv); tex.flipY = false; tex.colorSpace = T.SRGBColorSpace;
     return a.mats[team] = new T.MeshLambertMaterial({map: tex, color: team === "home" ? 0xe6edff : 0xffe6e6});
   }
-  function kitInstance(name){
+  function kitInstance(name, mat){
     const a = KIT.assets[name], J = a.J, jointSet = new Set(a.joints), objs = [];
     const mk = i => {
       const n = J.nodes[i]; let o;
@@ -3912,13 +3922,13 @@ const R3 = (() => {
     const root = new T.Group(), rig = new T.Group();
     for (const i of J.scenes[J.scene || 0].nodes) rig.add(mk(i));
     root.add(rig);
-    const skinned = new T.SkinnedMesh(a.body, kitMat(a, "home")); skinned.frustumCulled = false;
+    const skinned = new T.SkinnedMesh(a.body, mat || kitMat(a, "home")); skinned.frustumCulled = false;
     rig.children[0].add(skinned);
     root.updateMatrixWorld(true);
     skinned.bind(new T.Skeleton(a.joints.map(j => objs[j]), a.inverses), skinned.matrixWorld);
     rig.scale.setScalar(KIT_HEIGHT/a.height*0.95);
     const mixer = new T.AnimationMixer(rig);
-    const inst = {root, rig, skinned, mixer, asset: name, actions: {}, cur: null, team: "", helm: Object.values(objs).filter(o => o && o.isMesh && o !== skinned)};
+    const inst = {root, rig, skinned, mixer, asset: name, actions: {}, cur: null, team: "", objs, helm: Object.values(objs).filter(o => o && o.isMesh && o !== skinned)};
     root.visible = false; scene.add(root);
     return inst;
   }
@@ -3938,6 +3948,126 @@ const R3 = (() => {
       for (const n of KIT_FILES) for (let i = 0; i < KIT_POOL[n]; i++) KIT.pools[n].push(kitInstance(n));
       KIT.ready = true; info.models = "kaykit";
     }catch(e){ KIT.failed = String(e && e.message || e); info.models = "procedural (" + KIT.failed.slice(0, 60) + ")"; }
+  }
+
+  /* ---------- the football mannequin: Quaternius Universal Animation Library 1 and 2 (CC0) ----------
+     The default players. UAL1 has the mesh, the rig and 43 clips; UAL2 adds 43 more on the same rig (the
+     throw, the knockback, getting up, the shield dash), merged onto UAL1's skeleton by bone name. Its two
+     plain materials become vertex colors by body part: jersey, pants, socks, skin, gloves and cleats, one
+     set per team and skin tone. The helmet (shell, facemask, stripe), shoulder pads and numbers ride on the
+     head and chest bones. UAL1 alone is enough to play; UAL2's clips join when they arrive. */
+  const UAL = {ready: false, failed: "", geos: {}, pool: [], used: 0, fit: null, mat: null};
+  const UAL_POOL = 34, UAL_SKIN = [0xc68c62, 0x7a4b2e];
+  function ualRegion(n, x, y){
+    if (/^(Head|neck)/.test(n)) return "skin";
+    if (/thumb|index|middle|ring|pinky|hand/.test(n)) return "glove";
+    if (/lowerarm/.test(n)) return "skin";
+    if (/upperarm/.test(n)) return Math.abs(x) < 0.34 ? "jersey" : "skin";   // short sleeves over the pads
+    if (/clavicle|spine_0[23]/.test(n)) return "jersey";
+    if (/spine_01|pelvis/.test(n)) return y > 1.0 ? "jersey" : "pants";
+    if (/thigh/.test(n)) return "pants";
+    if (/calf/.test(n)) return y > 0.47 ? "pants" : "sock";
+    if (/foot|ball/.test(n)) return "cleat";
+    return "jersey";
+  }
+  // one color attribute per team and skin tone; the rest of the geometry is shared
+  function ualGeo(team, tone){
+    const key = team + tone; if (UAL.geos[key]) return UAL.geos[key];
+    const a = KIT.assets.UAL, src = a.body, pos = src.attributes.position.array, si = src.attributes.skinIndex.array, sw = src.attributes.skinWeight.array, mt = src.userData.mat;
+    const home = team === "home", pal = {jersey: home ? COL.home : COL.away, pants: home ? 0xf2f2ee : 0xd9d2c2, sock: home ? COL.home : 0xf2e6d0,
+      skin: UAL_SKIN[tone], glove: home ? 0xf4f4f4 : 0x1b1b1b, cleat: 0x151515}, C = {};
+    for (const k in pal) C[k] = new T.Color(pal[k]);
+    if (!a.region){
+      a.region = [];
+      for (let v = 0; v < pos.length/3; v++){
+        let b = 0; for (let q = 1; q < 4; q++) if (sw[v*4 + q] > sw[v*4 + b]) b = q;
+        a.region[v] = ualRegion(a.J.nodes[a.joints[si[v*4 + b]]].name, pos[v*3], pos[v*3 + 1]);
+      }
+    }
+    const col = new Float32Array(pos.length);
+    for (let v = 0; v < pos.length/3; v++){ const c = C[a.region[v]], k = mt[v] ? 0.8 : 1; col[v*3] = c.r*k; col[v*3 + 1] = c.g*k; col[v*3 + 2] = c.b*k; }   // the joint rings a shade darker
+    const g = new T.BufferGeometry();
+    for (const k in src.attributes) g.setAttribute(k, src.attributes[k]);
+    g.setAttribute("color", new T.BufferAttribute(col, 3)); g.setIndex(src.index); g.boundingBox = src.boundingBox;
+    return UAL.geos[key] = g;
+  }
+  // where the gear goes, measured once from the bind pose: the head's middle and size, the chest's front and back
+  function ualFit(){
+    if (UAL.fit) return UAL.fit;
+    const a = KIT.assets.UAL, pos = a.body.attributes.position.array, head = new T.Box3(), chest = {f: -9, b: 9};
+    ualGeo("home", 0);
+    for (let v = 0; v < pos.length/3; v++){
+      const x = pos[v*3], y = pos[v*3 + 1], z = pos[v*3 + 2], n = a.region[v];
+      if (n === "skin" && y > 1.55) head.expandByPoint(new T.Vector3(x, y, z));
+      if (n === "jersey" && Math.abs(x) < 0.06 && y > 1.22 && y < 1.36){ chest.f = Math.max(chest.f, z); chest.b = Math.min(chest.b, z); }
+    }
+    const c = head.getCenter(new T.Vector3()), sz = head.getSize(new T.Vector3());
+    return UAL.fit = {head: c, headR: Math.max(sz.x, sz.z)/2, top: head.max.y, chest};
+  }
+  // gear built in the bind pose, then handed to a bone so it follows the animation
+  function ualAttach(inst, boneName, mesh, x, y, z, s = 1, ry = 0){
+    const bone = inst.rig.getObjectByName(boneName); if (!bone) return mesh;
+    const m = new T.Matrix4().compose(new T.Vector3(x, y, z), new T.Quaternion().setFromEuler(new T.Euler(0, ry, 0)), new T.Vector3(s, s, s));
+    m.premultiply(bone.matrixWorld.clone().invert()).decompose(mesh.position, mesh.quaternion, mesh.scale);
+    bone.add(mesh); return mesh;
+  }
+  function ualInstance(){
+    if (!UAL.mat) UAL.mat = new T.MeshLambertMaterial({vertexColors: true});
+    const inst = kitInstance("UAL", UAL.mat), F = ualFit(), h = F.head, s = F.headR*1.45/0.21;
+    inst.root.updateMatrixWorld(true);
+    inst.rig.scale.setScalar(1); inst.root.updateMatrixWorld(true);
+    // the helmet: the procedural players' shell, facemask and stripe, sized to the head
+    const helm = new T.Group(), shell = new T.Mesh(G.helmet, M.helmHome); shell.scale.set(1, 1.05, 1.12);
+    const mask = new T.Mesh(G.mask, M.mask), stripe = new T.Mesh(G.stripe, M.gold); helm.add(shell, mask, stripe);
+    ualAttach(inst, "Head", helm, h.x, h.y + 0.012, h.z + 0.008, s);
+    // shoulder pads under the jersey, and the numbers front and back
+    const pads = ualAttach(inst, "spine_03", new T.Mesh(G.pads, M.home), 0, 1.43, -0.01, 0.62);
+    const ch = F.chest, numF = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.28, ch.f + 0.012, 0.62);
+    const numB = ualAttach(inst, "spine_03", new T.Mesh(G.num, M.gold), 0, 1.3, ch.b - 0.012, 0.66, Math.PI);
+    pads.scale.y *= 1.1;
+    inst.rig.scale.setScalar(KIT_HEIGHT/KIT.assets.UAL.height*0.95);
+    const shadow = new T.Mesh(G.shadow, M.shadow); shadow.rotation.x = -Math.PI/2; shadow.position.y = 0.03; inst.root.add(shadow);
+    Object.assign(inst, {shell, mask, stripe, pads, numF, numB, num: -1, tone: Math.random() < 0.5 ? 0 : 1, busy: 0, fold: Math.random() < 0.3});
+    return inst;
+  }
+  async function loadUAL(){
+    try{
+      KIT.assets.UAL = await kitParse(await kitFetch("UAL1_Standard"), {slim: true});
+      for (let i = 0; i < UAL_POOL; i++) UAL.pool.push(ualInstance());
+      UAL.ready = true; info.models = "ual";
+      // the second library: more clips on the same rig; play goes on without them
+      try{ Object.assign(KIT.assets.UAL.clips, (await kitParse(await kitFetch("UAL2_Standard"), {slim: true, clipsOnly: true})).clips); info.models = "ual+2"; }catch(e){}
+    }catch(e){ UAL.failed = String(e && e.message || e); info.models = "procedural (" + UAL.failed.slice(0, 60) + ")"; }
+  }
+  function ualDress(inst, team, num){
+    if (inst.team !== team){
+      const home = team === "home";
+      inst.skinned.geometry = ualGeo(team, inst.tone);
+      inst.shell.material = home ? M.helmHome : M.helmAway; inst.stripe.material = home ? M.gold : M.black;
+      inst.pads.material = home ? M.home : M.away; inst.team = team; inst.num = -1;
+    }
+    if (inst.num !== num){ inst.numF.material = inst.numB.material = numMat(num, team); inst.num = num; }
+  }
+  const UAL_LEN = n => { const c = KIT.assets.UAL.clips[n]; return c ? c.duration : 0; };
+  function ualPut(team, num, o, key, dt){
+    const inst = UAL.pool[UAL.used++]; if (!inst) return;
+    ualDress(inst, team, num);
+    inst.root.visible = true; inst.root.position.set(o.x, 0, -o.z); inst.root.rotation.y = o.face || 0;
+    const spd = o.spd ?? (o.run || 0)*6, has = n => !!KIT.assets.UAL.clips[n];
+    inst.busy = Math.max(0, inst.busy - dt);
+    if (o.down){ inst.busy = 0; kitPlay(inst, "Death01", {once: true, fade: 0.1}); }
+    else if (inst.cur === "Death01" && has("LayToIdle")){ kitPlay(inst, "LayToIdle", {once: true, fade: 0.1}); inst.busy = UAL_LEN("LayToIdle")*0.9; }   // getting up
+    else if (inst.busy > 0){}
+    else if (o.thr && has("OverhandThrow")){ kitPlay(inst, "OverhandThrow", {once: true, fade: 0.1, speed: 1.3}); inst.busy = UAL_LEN("OverhandThrow")/1.3; }
+    else if (o.cel) kitPlay(inst, "Dance_Loop");
+    else if (o.mv === "truck" && has("Shield_Dash")) kitPlay(inst, "Shield_Dash", {fade: 0.1});
+    else if (o.mv === "stiff") kitPlay(inst, "Punch_Cross", {fade: 0.1});
+    else if ((o.reach || 0) >= 0.6) kitPlay(inst, "Push_Loop");
+    else if (spd > 4.6) kitPlay(inst, "Sprint_Loop", {speed: clamp(spd/7, 0.7, 1.5)});
+    else if (spd > 1.2) kitPlay(inst, "Jog_Fwd_Loop", {speed: clamp(spd/3.6, 0.6, 1.4)});
+    else if ((o.crouch || 0) >= 0.5) kitPlay(inst, "Crouch_Idle_Loop");
+    else kitPlay(inst, o.idle && inst.fold && has("Idle_FoldArms_Loop") ? "Idle_FoldArms_Loop" : "Idle_Loop");
+    inst.mixer.update(dt);
   }
   // which body for which job: linemen are the Barbarian, linebackers, ends and the QB the Knight, skill players the Rogue
   function kitRole(key, num){
@@ -3963,15 +4093,17 @@ const R3 = (() => {
   function placePlayers(t, dt){
     const g = game; let n = 0;
     if (KIT.ready) KIT.used = {};
+    UAL.used = 0;
     const put = (team, num, o, key, home = 0) => {
       const oo = key != null && !o.down ? motion(key, o, home, dt) : o;
-      if (KIT.ready){ kitPut(team, num, oo, key, dt); return; }   // the rigged players, once they've loaded
+      if (UAL.ready){ ualPut(team, num, oo, key, dt); return; }   // the football mannequins, once they've loaded
+      if (KIT.ready){ kitPut(team, num, oo, key, dt); return; }   // the KayKit players (?kaykit)
       if (n >= figs.length) return; const f = figs[n++]; dress(f, team, num); pose(f, oo);
     };
     if (g && g.replay){
       // the replay: you, your blockers, and their defense, as recorded
       const F = replayFrame(g.replay);
-      put("home", 22, {x: F.p.x, z: F.p.z, run: 0, anim: t*8, crouch: 0.1, reach: 0}, "rpRB", Math.PI);
+      put("home", 22, {x: F.p.x, z: F.p.z, run: 0, anim: t*8, crouch: 0.1, reach: F.p.m === "pile" ? 0.8 : 0, mv: F.p.m}, "rpRB", Math.PI);
       F.b.forEach((b, i) => put("home", b.num, {x: b.x, z: b.z, run: 0, anim: t*6 + i, crouch: b.eng ? 0.45 : 0.15, reach: b.eng ? 0.8 : 0}, "rpB" + i, Math.PI));
       F.d.forEach((d, i) => put("away", d.num, {x: d.x, z: d.z, down: d.down, run: 0, anim: t*6 + i, crouch: 0.15, reach: 0}, "rpD" + i, 0));
       for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
@@ -3981,17 +4113,18 @@ const R3 = (() => {
       const opened = g.phase === "live" ? clamp(-g.t/0.6, 0, 1) : 0;
       const pset = g.playType === "pass" && (g.phase === "live" || g.phase === "dead") && g.pp ? clamp(g.pp.liveT/0.4, 0, 1) : 0;
       const hole = g.play.hole, slots = [-4, -2, 0, 2, 4], olZ = -0.6 - 0.5*pset, dlZ = 0.7 - 0.7*pset, live = g.phase === "live";
-      const pre = g.offense && (g.phase === "huddle" || g.phase === "cadence"), stage = preSnap(g).stage;
+      const pre = g.offense && (g.phase === "huddle" || g.phase === "cadence"), stage = preSnap(g).stage, cel = g.phase === "dead" && g.result && g.result.kind === "td";
       if (g.blockers && !pre) for (const b of g.blockers){
         // run blocking: blockers drawn where they are, arms out when locked on
         put("home", b.num, {x: b.x, z: b.z, face: b.engaged ? Math.atan2(b.drive.x, -b.drive.z) + Math.PI : undefined, fixedFace: !!b.engaged,
-          crouch: b.engaged ? 0.45 : 0.15, run: 0, anim: b.anim || 0, reach: b.engaged ? 0.8 : 0}, "blk" + b.key, Math.PI);
+          crouch: b.engaged ? 0.45 : 0.15, run: 0, anim: b.anim || 0, reach: b.engaged && !cel ? 0.8 : 0, cel}, "blk" + b.key, Math.PI);
       }
       if (g.offense) for (const o of g.offense){
         // before the snap everyone comes from the offense list; after it, only the receivers, tight end, and a shotgun QB
         if (!pre && (o.kind === "OL" || (o.kind === "QB" && g.qb) || (g.blockers && o.kind !== "QB" && g.blockers.some(b => b.kind === o.kind)))) continue;
         const inHuddle = stage === "huddle", set = !inHuddle && stage !== "lineup";
-        put("home", o.num, {x: o.x, z: o.z, face: o.face ?? undefined, fixedFace: o.face != null && (inHuddle || set), crouch: inHuddle ? 0.3 : set && o.kind === "OL" ? 0.75 : set ? 0.35 : 0.1, run: 0, anim: t*6, reach: live && o.kind === "TE" ? 0.7 : 0}, "off" + o.key, Math.PI);
+        put("home", o.num, {x: o.x, z: o.z, face: o.face ?? undefined, fixedFace: o.face != null && (inHuddle || set), crouch: inHuddle ? 0.3 : set && o.kind === "OL" ? 0.75 : set ? 0.35 : 0.1, run: 0, anim: t*6, reach: live && o.kind === "TE" ? 0.7 : 0,
+          idle: inHuddle, thr: o.kind === "QB" && !!g.ball && now() - g.ball.t0 < 0.5, cel: cel && o.kind !== "QB"}, "off" + o.key, Math.PI);
       }
       if (!pre && !g.blockers) for (let i = 0; i < 5; i++){
         let x = slots[i]; if (Math.abs(x - hole) < 1.5) x += (x >= hole ? 1 : -1)*1.4*opened;
@@ -4009,6 +4142,7 @@ const R3 = (() => {
       }
     }
     for (let i = n; i < figs.length; i++) figs[i].root.visible = false;
+    for (let i = UAL.used; i < UAL.pool.length; i++) UAL.pool[i].root.visible = false;
     if (KIT.ready) for (const nm of KIT_FILES) KIT.pools[nm].forEach((inst, i) => { if (i >= (KIT.used[nm] || 0)) inst.root.visible = false; });
   }
   // body tracking matters more than pixels: if detection slows down, render fewer pixels, then go back to 2D
