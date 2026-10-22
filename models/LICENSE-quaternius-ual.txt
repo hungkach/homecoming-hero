@@ -1,0 +1,12 @@
+Universal Animation Library (Standard), parts 1 and 2
+Created by Quaternius (https://quaternius.com)
+Pack pages: https://quaternius.com/packs/universalanimationlibrary.html
+            https://quaternius.itch.io/universal-animation-library-2
+
+License: Creative Commons Zero (CC0 1.0), public domain dedication
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Free to use in personal, educational and commercial projects.
+Credit is appreciated but not required.
+
+Files: UAL1_Standard.glb, UAL2_Standard.glb (one humanoid mannequin rig, 43 clips each)
