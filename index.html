@@ -40,6 +40,8 @@ video{position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;left:0;t
 .clock{background:#0a0f1d;padding:6px 12px;display:grid;place-items:center;font:600 clamp(14px,2.4vh,24px)/1.1 var(--cond);font-variant-numeric:tabular-nums;text-align:center;min-width:76px}
 .situation{background:rgba(10,15,29,.85);border:1px solid var(--line);padding:5px 14px;border-radius:8px;font:700 clamp(16px,3vh,30px)/1 var(--cond);letter-spacing:.03em}
 .situation .yl{color:var(--gold)}
+.mo{height:6px;width:min(220px,40vw);background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden;margin:4px auto 0}
+.mo i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ffcf3f,#ff8a3d);transition:width .6s}
 .banner{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:calc(100% - 32px);display:grid;gap:6px}
 .banner .big{font:400 clamp(34px,8vh,96px)/1 var(--slab);color:var(--gold);text-shadow:0 4px 0 #000,0 0 24px rgba(0,0,0,.6);text-wrap:balance}
 .banner .small{font:700 clamp(18px,3.4vh,36px)/1.15 var(--cond);text-shadow:0 2px 0 #000;text-wrap:balance}
@@ -120,6 +122,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     <div class="team away"><span>Raiders</span><b id="awayScore">0</b></div>
   </div>
   <div class="situation" id="situation">1st &amp; 10 · own <span class="yl">25</span></div>
+  <div class="mo" id="mo" hidden><i id="moFill"></i></div>
 </div>
 <div class="banner" id="banner" hidden><div class="big" id="bannerBig"></div><div class="small" id="bannerSmall"></div></div>
 <div class="playCard" id="playCard" hidden><div class="pcTag" id="pcTag"></div><div class="pcCall" id="pcCall"></div><div class="pcName" id="pcName"></div><ol class="pcSteps" id="pcSteps"></ol></div>
@@ -155,7 +158,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 23, sprint and hurdle in the warm-up</p>
+    <p class="diag" id="buildStamp">Build: Oct 23, momentum</p>
   </div>
 </div>
 
@@ -1946,8 +1949,18 @@ let bannerT = 0;
 function banner(big, small, secs){ $("bannerBig").textContent = big; $("bannerSmall").textContent = small || ""; $("banner").hidden = false; bannerT = secs || 2; }
 function hint(text){ const h = $("hint"); if (!text){ h.hidden = true; return; } h.textContent = text; h.hidden = false; }
 
+/* ---------- momentum ----------
+   Big plays build it: a broken tackle, a 10 or 20 yard run, a touchdown, beast mode. It fades a fifth each
+   play and drops after a play that goes nowhere. While it's up your blocks hold a little better, tacklers
+   hold on a little less, and a juke fools a man a little longer. Earned by output; the score never sets it. */
+function morale(g, k){
+  const was = g.morale || 0; g.morale = clamp(was + k, 0, 1);
+  if (was < 0.6 && g.morale >= 0.6){ crowd(0.5, 2.5); sfx.fanWhistles(4); }
+  const el = $("moFill"); if (el){ $("mo").hidden = g.morale < 0.05; el.style.width = `${Math.round(g.morale*100)}%`; }
+}
 function startHuddle(newDrive){
   const g = game;
+  morale(g, -(g.morale || 0)*0.2);
   g.phase = "huddle"; g.t = g.huddleLen = 6; g.broke = false;
   // 4th down: the coach decides between going for it, a field goal, and a punt
   if (g.down === 4 && !window.__hhForcePass && !window.__hhForceRoute){ const k = fourthDown(); if (k !== "go"){ specialTeams(k); return; } }
@@ -2308,7 +2321,7 @@ function updateBlockers(dt, t){
       // locked on: a strength contest. Blockers on him add up (a double team drives a lineman back); he fights
       // across the face toward the runner, and the losing side gives ground. Losing also wears the block down faster.
       if (d.state === "down" || d.state === "resolved" || (d.shedProg || 0) >= d.shedAfter){ d.shedAt = live; d.block = null; b.engaged = false; b.target = null; b.mode = "done"; if (d.state === "read" || d.state === "blocked") d.state = "read"; continue; }
-      let sb = BSTR[b.kind] || 0.8;
+      let sb = (BSTR[b.kind] || 0.8)*(1 + 0.15*(g.morale || 0));   // momentum: the line blocks a little harder
       for (const h of g.blockers) if (h !== b && h.engaged && h.helper && h.target === d) sb += 0.6*(BSTR[h.kind] || 0.8);
       d.wob = clamp((d.wob || 0) + rand(-1, 1)*dt*1.5, -0.25, 0.25);
       const net = clamp(sb - (DSTR[d.type] || 0.8)*(1 + 0.5*(d.shedBonus || 0)) - ((g.q - 1)/3)*0.15 + d.wob, -1, 1);
@@ -2458,8 +2471,8 @@ function updatePile(dt, t){
   if (low || pl.deep) pl.power = (pl.power || 0) + Math.max(0, sps - 2.6)*dt;   // the shoulder down now, or you hit the pile in a deep squat; and the knees churning
   if (pl.power > 1.0 && pl.t < pl.dur){
     if (pl.d){ pl.d.state = "down"; pl.d.vx = rand(-2, 2); pl.d.vz = 2; }
-    g.pile = null; p.speed = 5.5; p.lastShoulder = -9; g.stats.broken++; sfx.pads(); g.shake = 0.6; crowd(0.4, 2);
-    banner("Beast mode!", "Out the other side!", 1.2); announce("truck", {chance: 0.7}); return;
+    g.pile = null; p.speed = 5.5; p.lastShoulder = -9; g.stats.broken++; morale(g, 0.08); sfx.pads(); g.shake = 0.6; crowd(0.4, 2);
+    morale(g, 0.2); banner("Beast mode!", "Out the other side!", 1.2); announce("truck", {chance: 0.7}); return;
   }
   if (pl.d){ pl.d.z = p.z + 0.5; pl.d.x += (p.x - pl.d.x)*dt*4; }
   // help arrives: the pile stops sooner
@@ -2548,6 +2561,7 @@ function endPlay(kind, extra){
   g.bigPlay = (kind === "td" || gain >= 20) && R3.info.mode === "3d" && g.rec && g.rec.length > 15;   // gets a replay
   if (g.caught){ g.stats.catches++; g.stats.recYards += gain; }
   else { g.stats.carries++; g.stats.yards += gain; g.stats.long = Math.max(g.stats.long, gain); }
+  morale(g, kind === "td" ? 0.5 : gain >= 20 ? 0.35 : gain >= 10 ? 0.15 : gain <= 0 ? -(g.morale || 0)*0.4 : 0);
   if (kind === "td"){
     g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
     banner("Touchdown!", `${gain} yard ${g.caught ? "catch and run" : "run"}. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
@@ -2600,7 +2614,7 @@ function resolveContact(d, t, tc = t){
   // the hurdle: over the top of a tackler in front of you; he goes under, and the landing costs a little speed
   if (hurdle && Math.random() < 0.55 + 0.35*frontW){
     d.state = "down"; d.vx = rand(-0.5, 0.5); d.vz = -1.5; p.speed *= 0.9;
-    g.stats.hurdles = (g.stats.hurdles || 0) + 1; g.stats.broken++; sfx.whoosh(); g.shake = 0.3; crowd(0.4, 1.5);
+    g.stats.hurdles = (g.stats.hurdles || 0) + 1; g.stats.broken++; morale(g, 0.08); sfx.whoosh(); g.shake = 0.3; crowd(0.4, 1.5);
     banner("Hurdled him!", "", 1); if (!announce("hurdle", {chance: 0.6})) say("Hurdled him!");
     return;
   }
@@ -2608,9 +2622,10 @@ function resolveContact(d, t, tc = t){
   const hot = Math.hypot(d.vx, d.vz) > d.speed*0.85, reach = hot ? REACH*0.8 : REACH;
   const dive = Math.abs(dx) > reach;                        // just out of reach: he leaves his feet for an arm tackle
   // Ghost Reps' finish-drill rule: come in hot and a juke makes you miss; break down and you still get a hand on him
-  if (dive && dz > -0.3 && (hot || (sinceJuke < 0.9 && (p.jukeK || 0) > 0.35)) && (sinceJuke < 1.0 || Math.random() < 0.5)){
+  const jw = 1 + 0.3*(g.morale || 0);   // momentum: a juke fools a man a little longer
+  if (dive && dz > -0.3 && (hot || (sinceJuke < 0.9*jw && (p.jukeK || 0) > 0.35)) && (sinceJuke < 1.0*jw || Math.random() < 0.5)){
     d.state = "down"; d.vx = Math.sign(dx)*3; d.vz = d.vz*0.5; sfx.whoosh();
-    if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; banner("Juked!", "", 1); if (!announce("juke", {chance: 0.5})) say("Juked him!"); crowd(0.3, 1); }
+    if (sinceJuke < 1.2){ g.stats.jukes++; g.stats.broken++; morale(g, 0.08); banner("Juked!", "", 1); if (!announce("juke", {chance: 0.5})) say("Juked him!"); crowd(0.3, 1); }
     return;
   }
   let hold = FORM[d.type] ?? 0.75;
@@ -2623,6 +2638,7 @@ function resolveContact(d, t, tc = t){
   // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
   const noMove = !truck && !stiff && !hurdle && sinceJuke > 1.2;
   if (noMove && !dive && Math.abs(dx) < 0.9 && nz > 0.5) hold = Math.max(hold, hot ? 0.7 : 0.85);
+  hold *= 1 - 0.12*(g.morale || 0);                         // momentum: tacklers hold on a little less
   hold = Math.max(hold*0.8, 0.2);                          // nobody is untackleable... (the 0.8: you're the star; the clock zones took the any-angle stiff arm away)
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
@@ -2631,7 +2647,7 @@ function resolveContact(d, t, tc = t){
     const kick = Pr/m*0.8 + 1;
     d.state = "down"; d.vx = nx*kick + rand(-1, 1); d.vz = nz*kick;
     p.speed *= clamp(1 - 0.4*Pd/(Pd + Pr), 0.6, 0.9);   // beating a man barely slows you: Barry Sanders the whole defense
-    g.stats.broken++; sfx.pads(); g.shake = truck ? 0.5 : 0.35; crowd(0.3, 1);
+    g.stats.broken++; morale(g, 0.08); sfx.pads(); g.shake = truck ? 0.5 : 0.35; crowd(0.3, 1);
     if (truck){ g.stats.trucks++; banner("Trucked him!", "", 1); if (!announce("truck", {chance: 0.6})) say("Trucked!"); }
     else if (stiff){ g.stats.stiffs++; banner("Stiff arm!", "", 1); announce("stiff", {chance: 0.6}); }
     else banner(spd >= VERY_FAST || ratio > 1.5 ? "Ran right through him!" : "Broke the tackle!", "", 1);
@@ -3025,7 +3041,7 @@ function endPass(result, why){
   if (kind !== "sack") g.ball = {t0: now(), dur: 1.0, x0: -1.3, z0: g.p.z + 0.4, x1: rand(-12, 12), z1: kind === "incomplete" ? rand(8, 18) : gain, caught: kind !== "incomplete"};
   if (kind === "td"){
     g.home += 7; g.stats.tds++; sfx.touchdown(); g.flash = 1.2;
-    banner("Touchdown!", `Clean pocket. ${gain} yard strike. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
+    morale(g, 0.3); banner("Touchdown!", `Clean pocket. ${gain} yard strike. Mustangs ${g.home}, Raiders ${g.away}.`, 3); say("Touchdown Mustangs!", true);
     announce("td", {force: true, delay: 1.2});
   } else if (result === "clean"){ banner("Clean pocket!", `Completed for ${gain}.`, 2.6); say("Clean pocket!"); sfx.cheer(); announce("clean", {chance: 0.7, delay: 1}); }
   else if (kind === "pass"){ banner("Hurried throw", `Dumped off for ${gain}.`, 2.4); }

@@ -39,6 +39,10 @@ More ways to get the ball in space:
 - Halfback screen: sell the block for a beat while the rush runs past you, drift to the flat, catch the short throw, then follow the linemen who release in front of you. It shows up on early downs too.
 - Halfback motion: before the snap you jog out to the slot (a few seconds of rest), then run a slant, an out, or the seam against the defender over you. The seam has no break: keep running and the ball comes over your shoulder.
 
+## Momentum
+
+Big plays build momentum: a broken tackle, a 10 or 20 yard run, a touchdown, beast mode. A thin gold bar under the down and distance shows it. While it's up, your blocks hold a little better, tacklers hold on a little less, and a juke fools a man a little longer. It fades each play and drops after a play that goes nowhere. The score never sets it.
+
 ## After the game
 
 The final screen states what you did: the score, minutes played, seconds at sprint pace (3 or more steps a second), plays, carries, rush yards, long run, touchdowns, first downs, tackles broken by juke, truck, stiff arm, or speed and power, catches, receiving yards, and pass pro reps with clean pockets, hurried throws and sacks. In body play it also keeps records on this device, in body units, each shown with your previous best: top cadence, highest knees (thigh angle), longest juke bound and deepest truck squat (both in torso lengths). Your fitness is the progression: rewards scale with your actual output, never rescaled to your own best.
