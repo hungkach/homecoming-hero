@@ -94,11 +94,11 @@ function director(t){
       const D = S.drill, g = HH.game, id = D.st.id, side = D.reps[0], near = g.dummy.z - g.p.z;
       if (D !== drillSeen.D || D.tries !== drillSeen.tries || D.reps.length !== drillSeen.left){ drillSeen = {D, tries: D.tries, left: D.reps.length, at: null, t0: t}; }
       const failing = (process.env.DRILLFAIL || "").split(",").includes(id) && D.tries === 0;
-      if (id === "run"){ knees(P, t - drillSeen.t0, 50); if (failing) camH = -0.9; else if (camH === -0.9) camH = 0; }
+      if (id === "run" || id === "sprint"){ knees(P, t - drillSeen.t0, id === "sprint" ? 80 : 50); if (failing) camH = -0.9; else if (camH === -0.9) camH = 0; }
       else if (failing){}
-      else if ((id === "juke" || id === "truck" || id === "stiff") && near < 2.0 && drillSeen.at == null && !D.repDone) drillSeen.at = t + 0.2;
+      else if ((id === "juke" || id === "truck" || id === "stiff" || (id === "jump" && side === "hurdle")) && near < 2.0 && drillSeen.at == null && !D.repDone) drillSeen.at = t + 0.2;
       else if ((id === "block") && drillSeen.at == null && t - drillSeen.t0 > 1.2) drillSeen.at = t;
-      else if (id === "jump" && g.ball && !g.ball.caught && t - g.ball.t0 > g.ball.dur - 0.5 && drillSeen.at == null) drillSeen.at = t;
+      else if (id === "jump" && side === "catch" && g.ball && !g.ball.caught && t - g.ball.t0 > g.ball.dur - 0.5 && drillSeen.at == null) drillSeen.at = t;
       const u = drillSeen.at == null ? -1 : t - drillSeen.at;
       if (u >= 0 && u < 1.4){
         if (id === "juke") off.x = offX + side*-0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // person's +x is their left

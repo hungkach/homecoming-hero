@@ -155,7 +155,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 23, clock moves, hurdle, zone reads</p>
+    <p class="diag" id="buildStamp">Build: Oct 23, sprint and hurdle in the warm-up</p>
   </div>
 </div>
 
@@ -1598,11 +1598,13 @@ function drawDemo(cv, id, t){
    the camera lost the body part it needs, you get back in frame first. After three misses it moves on
    with the easiest setting. */
 const DRILL_TRIES = 3;
-const VIS = {run: [25, 26], juke: [23, 24, 25, 26], truck: [23, 24, 25, 26], stiff: [13, 14, 15, 16], block: [13, 14, 15, 16], jump: [0, 23, 24]};
-const PART = {run: "knees", juke: "hips and knees", truck: "hips and knees", stiff: "arms", block: "arms", jump: "head and hips"};
+const VIS = {run: [25, 26], sprint: [25, 26], juke: [23, 24, 25, 26], truck: [23, 24, 25, 26], stiff: [13, 14, 15, 16], block: [13, 14, 15, 16], jump: [0, 23, 24]};
+const PART = {run: "knees", sprint: "knees", juke: "hips and knees", truck: "hips and knees", stiff: "arms", block: "arms", jump: "head and hips"};
 const WARM_STATIONS = [
-  {id: "run", name: "Running", types: ["step"], moves: ["jog", "knees"], limit: 10,
+  {id: "run", name: "Running", types: ["step"], moves: ["jog"], limit: 10,
     big: "Jog to the dummy", small: "Your easy pace. Every step moves you.", say: "Now jog to the dummy. Your easy pace."},
+  {id: "sprint", name: "Sprint", types: ["step"], moves: ["knees"], limit: 12,
+    big: "Sprint 20 yards", small: "High knees, fast. Faster knees get there sooner.", say: "Now sprint. Twenty yards. High knees."},
   {id: "juke", name: "Juke", types: ["hop"], moves: ["hopL", "hopR"], limit: 16, reps: [-1, 1],
     big: "Juke the dummy", small: "Bound to the side as you walk up to it.", say: "Juke the dummy."},
   {id: "truck", name: "Truck", types: ["level"], moves: ["halfSquat", "deepSquat"], limit: 12,
@@ -1611,7 +1613,7 @@ const WARM_STATIONS = [
     big: "Stiff arm the dummy", small: "Push your arm out to its side.", say: "Stiff arm the dummy."},
   {id: "block", name: "Block", types: ["raise"], moves: ["raiseB"], limit: 10,
     big: "Punch the sled", small: "Both arms straight out at once.", say: "Punch the sled. Both arms out."},
-  {id: "jump", name: "Jump", types: ["jump"], moves: ["jump"], limit: 10,
+  {id: "jump", name: "Jump", types: ["jump"], moves: ["jump"], limit: 16, reps: ["catch", "hurdle"],
     big: "Jump for the ball", small: "Jump and reach as it comes to you.", say: "Jump for the ball."}
 ];
 function drillGame(){
@@ -1640,19 +1642,20 @@ function drillTitle(){
   const D = setup.drill, st = D.st, side = D.reps[0];
   if (st.id === "juke") return side < 0 ? "Juke left" : "Juke right";
   if (st.id === "stiff") return side < 0 ? "Stiff arm left" : "Stiff arm right";
+  if (st.id === "jump") return side === "hurdle" ? "Hurdle the dummy" : "Jump for the ball";
   return st.big;
 }
 // where you and the dummy start each rep
 function drillPlace(){
   const D = setup.drill, g = game, p = g.p, d = g.dummy, id = D.st.id, side = D.reps[0] || 0;
   Object.assign(p, {x: 0, z: -6, speed: 0, dip: 0, stiffAnim: 0, jukeT: 9, air: 0, ballSide: id === "stiff" ? -side || 1 : 1});
-  Object.assign(d, {x: id === "stiff" ? side*0.75 : 0, z: id === "run" ? 4 : id === "block" ? -4.6 : -2.4, tilt: 0, side: 0, fall: 0, vx: 0, vz: 0});
+  Object.assign(d, {x: id === "stiff" ? side*0.75 : side === "hurdle" ? -0.85 : 0, z: id === "run" ? 4 : id === "sprint" ? 14 : id === "block" ? -4.6 : -2.4, tilt: side === "hurdle" ? 1.5 : 0, side: side === "hurdle" ? 1 : 0, fall: 0, vx: 0, vz: 0});   // the hurdle: lying across your path like a tackler diving at your legs
   g.ball = null; D.walkPause = 0.6; D.repDone = false; D.nextAt = null; D.squared = false; p.jumpT = null;
 }
 function drillEvent(e){
   const D = setup.drill; if (!D || D.done || D.after) return;
   const id = D.st.id, g = game, p = g.p;
-  if (e.type === "step"){ D.steps.push({t: e.t, w: e.pitch == null ? 1 : clamp(0.75 + (e.pitch - 30)/100, 0.75, 1.15)}); if (id === "run"){ D.count++; sfx.step(); } }
+  if (e.type === "step"){ D.steps.push({t: e.t, w: e.pitch == null ? 1 : clamp(0.75 + (e.pitch - 30)/100, 0.75, 1.15)}); if (id === "run" || id === "sprint"){ D.count++; sfx.step(); } }
   else if (e.type === "hop"){
     D.lastHop = e.t;
     if (id === "juke" && !D.repDone && p.jukeT > 0.3){
@@ -1667,7 +1670,8 @@ function drillEvent(e){
     else if (id === "stiff") D.held.push(e);
   }
   else if ((e.type === "level" || e.type === "duck") && id === "truck") D.held.push(e);
-  else if (e.type === "jump" && id === "jump" && g.ball && !g.ball.caught){ p.jumpT = 0; drillHit(1); }
+  else if (e.type === "jump" && id === "jump" && D.reps[0] === "catch" && g.ball && !g.ball.caught){ p.jumpT = 0; drillHit(1); }
+  else if (e.type === "jump" && id === "jump" && D.reps[0] === "hurdle" && !D.repDone && g.dummy.z - p.z < 3){ p.jumpT = 0; sfx.whoosh(); drillGot("hurdle"); }
 }
 // a rep the camera saw: mark it and show it
 function drillGot(side){ const D = setup.drill; D.got[side || 0] = true; D.flash = 1; D.repDone = true; }
@@ -1677,7 +1681,7 @@ function drillHit(k, side){
   else if (id === "stiff"){ d.fall = 1; d.vx = d.x >= 0 ? 4 : -4; d.side = d.x >= 0 ? 1 : -1; p.stiffAnim = 1; sfx.pads(); }
   else if (id === "block"){ d.vz = 3; d.fall = 0.35; p.stiffAnim = 1; sfx.pads(); }
   else if (id === "jump"){ g.ball.caught = true; g.ball.z1 = p.z + 0.7; g.ball.x1 = p.x; sfx.handoff(); }
-  else if (id === "run"){ d.fall = 1; d.vz = 2; sfx.hit(); g.shake = 0.3; }
+  else if (id === "run" || id === "sprint"){ d.fall = 1; d.vz = 2 + (id === "sprint" ? p.speed*0.4 : 0); sfx.hit(); g.shake = 0.3; }
 }
 function updateDrill(dt){
   const S = setup, D = S.drill, st = D.st, id = st.id, g = game, p = g.p, d = g.dummy, t = now();
@@ -1694,10 +1698,11 @@ function updateDrill(dt){
   }
   // you: running from your steps, or walking up to the dummy for the move drills
   const sps = D.steps.filter(s => t - s.t <= 1.2).reduce((a, s) => a + s.w, 0)/1.2;
-  if (id === "run"){ p.speed += clamp(clamp(sps*1.9, 0, 9.3) - p.speed, -5*dt, 6*dt); if (!D.repDone) p.z += p.speed*dt; p.bob += dt*(2 + sps*2.2); }
-  else if (id === "juke" || id === "truck" || id === "stiff"){
+  const walker = id === "juke" || id === "truck" || id === "stiff" || (id === "jump" && D.reps[0] === "hurdle"), passes = id === "juke" || id === "jump";
+  if (id === "run" || id === "sprint"){ p.speed += clamp(clamp(sps*1.9, 0, 9.3) - p.speed, -5*dt, 6*dt); if (!D.repDone) p.z += p.speed*dt; p.bob += dt*(2 + sps*2.2); }
+  else if (walker){
     D.walkPause -= dt;
-    if (D.walkPause <= 0 && !(D.repDone && id !== "juke") && !(D.squared && !D.repDone)){ p.speed = 1.7; p.z += p.speed*dt; p.bob += dt*4; } else p.speed = 0;
+    if (D.walkPause <= 0 && !(D.repDone && !passes) && !(D.squared && !D.repDone)){ p.speed = D.repDone ? 3.5 : 1.7; p.z += p.speed*dt; p.bob += dt*4; } else p.speed = 0;   // past the dummy after a juke or a hurdle
   } else p.bob += dt*2;
   if (p.jukeT < 0.3 && p.jukeLat0 != null){ p.jukeT += dt; p.jukeMax = Math.max(p.jukeMax, Math.abs(BodyCore.state.lateral - p.jukeLat0)); p.jukeTo = p.jukeFrom + p.jukeDir*clamp(1 + 3*p.jukeMax, 1.2, 2.6); p.x = lerp(p.jukeFrom, p.jukeTo, ease(clamp(p.jukeT/0.22, 0, 1))); }
   p.dip = Math.max(0, p.dip - dt*1.5); p.stiffAnim = Math.max(0, p.stiffAnim - dt*1.4);
@@ -1705,12 +1710,12 @@ function updateDrill(dt){
   // the dummy: knocked back and down by a hit
   if (d.fall > 0){ d.tilt = Math.min(1.45, d.tilt + dt*4*d.fall); d.z += d.vz*dt; d.x += (d.vx || 0)*dt; d.vz *= 0.92; d.vx = (d.vx || 0)*0.92; }
   // the ball for the jump: lobbed to you again and again until you go up for it
-  if (id === "jump" && (!g.ball || (!g.ball.caught && t - g.ball.t0 > g.ball.dur + 0.6))) { g.ball = {t0: t, dur: 1.5, x0: 0, z0: 14, x1: 0, z1: p.z + 0.8, caught: false}; sfx.incoming(1.5); }
+  if (id === "jump" && D.reps[0] === "catch" && (!g.ball || (!g.ball.caught && t - g.ball.t0 > g.ball.dur + 0.6))) { g.ball = {t0: t, dur: 1.5, x0: 0, z0: 14, x1: 0, z1: p.z + 0.8, caught: false}; sfx.incoming(1.5); }
   // squared up a yard and a half from the dummy: stop, beep like in the game, and wait for the move (no clock to beat)
-  if (!D.repDone && (id === "truck" || id === "stiff" || id === "juke") && p.z >= d.z - 1.5){ p.z = d.z - 1.5; p.speed = 0; if (!D.squared){ D.squared = true; sfx.breakCue(0); } }
-  if (id === "run" && !D.repDone && p.z >= d.z - 1.0) drillHit(1);
+  if (!D.repDone && walker && p.z >= d.z - 1.5){ p.z = d.z - 1.5; p.speed = 0; if (!D.squared){ D.squared = true; sfx.breakCue(0); } }
+  if ((id === "run" || id === "sprint") && !D.repDone && p.z >= d.z - 1.0) drillHit(1);
   // a finished rep: the next side, or the check is passed
-  if (D.repDone && !D.nextAt){ D.nextAt = t + (id === "juke" ? 1.4 : 1.1); }
+  if (D.repDone && !D.nextAt){ D.nextAt = t + (passes ? 1.4 : 1.1); }
   if (D.nextAt && t >= D.nextAt){
     D.nextAt = null;
     const left = D.reps.filter(r => !D.got[r]);
@@ -1753,7 +1758,7 @@ function drawDrillHud(t){
   const u = Math.min(W, H), cy = H*0.8;
   if (D.flash > 0){ cx.strokeStyle = `rgba(90,220,120,${D.flash})`; cx.lineWidth = u*0.04; cx.strokeRect(0, 0, W, H); }
   cx.textAlign = "center"; cx.textBaseline = "middle";
-  if (D.st.id === "run"){
+  if (D.st.id === "run" || D.st.id === "sprint"){
     cx.font = `800 ${Math.round(u*0.16)}px system-ui, sans-serif`; cx.fillStyle = "rgba(255,255,255,.92)"; cx.fillText(String(D.count), W/2, cy - u*0.02);
     cx.font = `600 ${Math.round(u*0.045)}px system-ui, sans-serif`; cx.fillText("steps", W/2, cy + u*0.09);
   } else {
@@ -1761,7 +1766,8 @@ function drawDrillHud(t){
     all.forEach((r, i) => { const x = W/2 + (i - (all.length - 1)/2)*u*0.22;
       cx.beginPath(); cx.arc(x, cy, u*0.07, 0, 7); cx.fillStyle = D.got[r] ? "rgba(90,220,120,.95)" : "rgba(0,0,0,.45)"; cx.fill();
       cx.lineWidth = u*0.012; cx.strokeStyle = D.got[r] ? "#fff" : "rgba(255,255,255,.6)"; cx.stroke();
-      if (r){ cx.fillStyle = "#fff"; cx.font = `800 ${Math.round(u*0.06)}px system-ui, sans-serif`; cx.fillText(r < 0 ? "L" : "R", x, cy + u*0.004); } });
+      if (typeof r === "string"){ cx.fillStyle = "#fff"; cx.font = `700 ${Math.round(u*0.04)}px system-ui, sans-serif`; cx.fillText(r === "hurdle" ? "Hurdle" : "Catch", x, cy + u*0.11); }
+      else if (r){ cx.fillStyle = "#fff"; cx.font = `800 ${Math.round(u*0.06)}px system-ui, sans-serif`; cx.fillText(r < 0 ? "L" : "R", x, cy + u*0.004); } });
   }
   // time left, and which try this is
   const k = clamp(1 - D.t/D.st.limit, 0, 1);
