@@ -43,15 +43,22 @@ const HH = window.__hh;
     if (g.phase === "live" && g.playType !== "pass"){
       if (t >= nextStep){ els.field._l.pointerdown({clientX:100, clientY:100}); els.field._l.pointerup({clientX:100, clientY:100}); nextStep = t + 1/(+process.env.CADENCE || 4.6); }
       // the read: cut toward the green lane once, before the line
-      if (skill === "good" && g.lane && g.p.z < -0.5 && !g._readCut && Math.abs(g.lane.x - g.p.x) > 1.2){ g._readCut = true; HH.input.juke = Math.sign(g.lane.x - g.p.x); HH.input.jukeT = t; }
+      // zone runs: at the handoff, bound toward the green lane if it says bounce or bend (else bang it); other runs cut toward it once
+      const zoneRun = g.play.scheme === "zone" || g.play.scheme === "ozone";
+      if (skill === "good" && zoneRun && g.lane && g.hand && g.hand.state === "rb" && !g._readCut){ g._readCut = true; if (!/bang|press/.test(g.lane.k)){ HH.input.juke = Math.sign(g.lane.x - g.play.hole) || 1; HH.input.jukeT = t; } }
+      else if (skill === "good" && !zoneRun && g.lane && g.p.z < -0.5 && !g._readCut && Math.abs(g.lane.x - g.p.x) > 1.2){ g._readCut = true; HH.input.juke = Math.sign(g.lane.x - g.p.x); HH.input.jukeT = t; }
       if (skill === "good"){
         const p = g.p;
-        const threat = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && (g.t <= -d.delay) && d.z > p.z && d.z - p.z < 2.3 && Math.abs(d.x - p.x) < 1.3)[0];
-        if (threat && t - p.lastJuke > 0.6){
-          const r = Math.random();
-          if (r < 0.6) HH.input.juke = (threat.x > p.x ? -1 : 1) * (Math.abs(p.x) > 20 ? -Math.sign(p.x)*Math.sign(threat.x > p.x ? -1 : 1) : 1);
-          else if (r < 0.8) HH.input.shoulder = true; else HH.input.stiff = true;
-        }
+        // the clock: a man in front (10 to 2) gets a juke, a truck or a hurdle; a man at your side (2 to 5, 7 to 10) a stiff arm
+        const live = g.defenders.filter(d => d.state !== "down" && d.state !== "resolved" && !d.block && (g.t <= -d.delay) && Math.hypot(d.x - p.x, d.z - p.z) < 2.4);
+        const ang = d => Math.abs(Math.atan2(d.x - p.x, d.z - p.z))*180/Math.PI;
+        const near = live.sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];   // whoever hits you first
+        const threat = near && ang(near) < 60 && near.z - p.z < 2.3 ? near : null, side = near && !threat && ang(near) >= 60 && ang(near) < 150 && Math.hypot(near.x - p.x, near.z - p.z) < 1.8 ? near : null;
+        if (threat && t - p.lastJuke > 0.6 && t - (g._moveAt || -9) > 0.6){
+          g._moveAt = t; const r = Math.random();
+          if (r < 0.5) HH.input.juke = (threat.x > p.x ? -1 : 1) * (Math.abs(p.x) > 20 ? -Math.sign(p.x)*Math.sign(threat.x > p.x ? -1 : 1) : 1);
+          else if (r < 0.8 || process.env.NOHURDLE) HH.input.shoulder = true; else { HH.input.hurdle = true; HH.input.hurdleT = t; }
+        } else if (side && t - (g._moveAt || -9) > 0.6){ g._moveAt = t; HH.input.stiff = true; }
       }
     }
     if (g.phase !== lastPhase){ if (g.phase === "dead"){ plays.push(`${g.result.kind}:${g.result.gain}`); if (g.playType === "run" || g.caught === false && g.play.scheme) (globalThis.__byScheme ||= []).push([g.play.scheme || "pass", g.result.gain]); } lastPhase = g.phase; }

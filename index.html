@@ -155,7 +155,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 23, warm-up check on a dummy</p>
+    <p class="diag" id="buildStamp">Build: Oct 23, clock moves, hurdle, zone reads</p>
   </div>
 </div>
 
@@ -1342,6 +1342,8 @@ const CALLS = {
   truck: ["Trucked! Right through the linebacker and out the other side!",
     "He ran him over! Somebody get that defender a map back to the huddle!",
     "Lowered the shoulder and moved the pile! The Raiders felt that one in the bleachers!"],
+  hurdle: ["Over the top! He hurdled him like a backyard fence!", "Hurdle! That defender is checking the grass for his dignity!",
+    "Up and over! The Raiders tackled a cloud of air!"],
   stiff: ["Stiff arm! That defender just got sent back to the waiting room!",
     "Stiff arm! Moved him like a lawn chair in a windstorm!",
     "Stiff arm! Personal space, enforced!"],
@@ -1390,6 +1392,8 @@ const CALLS_DARK = {
   juke: ["Juked so hard the defender's ancestors felt it!", "He left that linebacker on read!", "Juke! That defender just got ghosted on live television!"],
   truck: ["Trucked! Somebody call his mother, and maybe a priest!", "Ran him over! That linebacker is going to need dental records to identify himself!",
     "Bulldozed! Right through him like a drunk uncle through a wedding cake!"],
+  hurdle: ["He jumped clean over him! That linebacker just found out he's a speed bump!", "Hurdle! Took the high road, which is more than the Raiders' booster club ever did!",
+    "Over the top! That defender is going to be explaining this one to his therapist!"],
   stiff: ["Stiff arm! Stiffest thing in this stadium, and I've seen the concession pretzels.", "Stiff arm! That's a restraining order with a hand on it!",
     "Stiff arm! Shoved him back into last week!"],
   stuffed: ["Stuffed! Like a Thanksgiving turkey.", "The hole closed faster than a bar at two in the morning.",
@@ -1444,7 +1448,7 @@ function announcerTick(){
 
 /* ============ input: touch / keyboard ============ */
 let mode = "touch";   // "touch" or "body"
-const input = {steps:[], juke:0, shoulder:false, stiff:false, punch:false, keyStance:false, jukeT:null, shoulderT:null, stiffT:null, punchT:null};
+const input = {steps:[], juke:0, shoulder:false, stiff:false, punch:false, hurdle:false, keyStance:false, jukeT:null, shoulderT:null, stiffT:null, punchT:null, hurdleT:null};
 // a step's worth: touch taps count 1; in body play a higher knee counts more, by the thigh angle itself
 // (absolute output, never scaled to the player's own best): 30 degrees or less counts 0.75, 70 or more counts 1.15
 function addStep(t, h, pitch){
@@ -1453,11 +1457,16 @@ function addStep(t, h, pitch){
 }
 // pointers are tracked one by one so pass pro can hold a stance with one thumb and punch with the other
 const pointers = new Map();
-cv.addEventListener("pointerdown", e => { pointers.set(e.pointerId, {x: e.clientX, y: e.clientY, t: now(), moved: false}); });
+cv.addEventListener("pointerdown", e => {
+  pointers.set(e.pointerId, {x: e.clientX, y: e.clientY, t: now(), moved: false});
+  // two fingers down together on a run: the hurdle (both taps then count as nothing else)
+  if (mode === "touch" && pointers.size === 2 && game && game.playType === "run" && game.phase === "live"){ const [a, b] = [...pointers.values()]; if (Math.abs(a.t - b.t) < 0.25){ input.hurdle = true; input.hurdleT = now(); a.hurdle = b.hurdle = true; } }
+});
 cv.addEventListener("pointermove", e => { const q = pointers.get(e.pointerId); if (q && Math.hypot(e.clientX - q.x, e.clientY - q.y) >= 28) q.moved = true; });
 function endPointer(e){
   const q = pointers.get(e.pointerId); if (!q) return;
   pointers.delete(e.pointerId);
+  if (q.hurdle) return;
   if (e.type === "pointercancel") return;
   const dx = e.clientX - q.x, dy = e.clientY - q.y, dist = Math.hypot(dx, dy), held = now() - q.t;
   if (mode === "body"){ if (game && game.phase !== "over") pause(); return; }
@@ -1492,6 +1501,7 @@ window.addEventListener("keydown", e => {
   else if (e.code === "ArrowLeft"){ input.juke = -1; input.jukeT = now(); }
   else if (e.code === "ArrowRight"){ input.juke = 1; input.jukeT = now(); }
   else if (e.code === "ArrowDown"){ input.shoulder = true; input.shoulderT = now(); }
+  else if (e.code === "KeyH"){ input.hurdle = true; input.hurdleT = now(); }
   else if (e.code === "ArrowUp"){ if (game.goalLine){ input.dive = true; input.diveT = now(); } else { input.stiff = true; input.stiffT = now(); } }
   else if (e.code === "Escape") pause();
 });
@@ -1900,6 +1910,7 @@ function pumpBody(){
     else if (e.type === "duck" || e.type === "level" || e.type === "raise"){ if (Math.abs(e.t - lastHop) > 0.5) heldMoves.push(e); }
     else if ((e.type === "jump" || e.type === "overhead") && game.playType === "route"){ input.punch = true; input.punchT = e.tEff; }   // the catch
     else if (e.type === "jump" && game.goalLine && game.playType === "run"){ input.dive = true; input.diveT = e.tEff; }   // the goal line dive
+    else if (e.type === "jump" && game.playType === "run" && e.t - lastHop > 1.5){ input.hurdle = true; input.hurdleT = e.tEff; }   // anywhere else: the hurdle (not the landing of a juke's step back)
   }
 }
 const handPunch = {L: -9, R: -9};
@@ -1960,7 +1971,7 @@ function startHuddle(newDrive){
   // the welcome goes first on the opening play, and the call waits for it
   if (g.firstPlay && newDrive && g.q === 1 && g.home + g.away === 0 && boothMode() !== "off" && $("voiceOn").checked){ lastSpoke = now(); speak(pickCall("open"), true); g.pre.max = 16; }
   say(huddleCall(g), true);
-  if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm");
+  if (g.firstPlay && mode === "touch") hint("Tap fast to run · swipe sideways to juke · swipe down to truck · swipe up to stiff arm · two-finger tap to hurdle");
 }
 /* ---------- workout pacing ----------
    No heart rate monitor, so the game estimates how hard you've been working from recent live seconds.
@@ -2374,12 +2385,34 @@ function openLane(){
   }
   return best;
 }
+// zone runs: where each choice may go. Bang: between the center and the play-side tackle; bounce: outside him;
+// bend (cut back): the back-side gaps. Outside zone presses the edge, bounces wider, cuts back inside.
+function zoneRegion(play, k){
+  const s = play.hole >= 0 ? 1 : -1, R = play.scheme === "ozone"
+    ? {bang: [3.0, 6.0], press: [3.0, 6.0], bounce: [6.5, 10], "cut back": [0.5, 3.0], bend: [0.5, 3.0]}
+    : {bang: [0.3, 3.6], bounce: [4.6, 8.0], bend: [-3.6, -0.4], "cut back": [-3.6, -0.4]};
+  const [a, b] = R[k] || R.bang; return [Math.min(s*a, s*b), Math.max(s*a, s*b)];
+}
+// the most open spot in that region: away from free tacklers and from the backs of your own blocks; sticky, so it doesn't twitch
+function creaseIn(g, [x0, x1], prev){
+  let best = null, bs = -1e9;
+  for (let i = 0; i <= 6; i++){
+    const x = x0 + (x1 - x0)*i/6;
+    let room = 6; for (const d of g.defenders){ if (d.state === "down" || d.state === "resolved" || d.z > 6 || d.z < -1) continue; room = Math.min(room, Math.abs(d.x - x) + (d.block ? 0.9 : 0)); }
+    for (const b of g.blockers || []) if (b.z < 1.2 && b.z > -2) room = Math.min(room, Math.abs(b.x - x) + 0.4);
+    const sc = room + (prev != null && Math.abs(x - prev) < 0.6 ? 0.5 : 0);
+    if (sc > bs){ bs = sc; best = x; }
+  }
+  return best;
+}
 // Automatic running lanes. Behind the line: the lane where the blocks are winning (bang, bend, or bounce),
 // switching only for a clearly better one. Past the line: every 0.15 s, score a few spots left and right by
 // how far the nearest free tackler in the next 8 yards would be, and bend toward the best one. Your job is speed and power.
 function autoPath(g, p, dt, t){
   if (p.z < 0.3 && !g.caught && !g.squared){
-    const want = g.lane ? g.lane.x : g.play.hole;
+    const zone = g.play.scheme === "zone" || g.play.scheme === "ozone";
+    if (zone && t - (p.creaseAt || -9) > 0.15){ p.creaseAt = t; p.creaseX = creaseIn(g, zoneRegion(g.play, g.path ? g.path.k : "bang"), p.creaseX); }
+    const want = zone ? p.creaseX : g.lane ? g.lane.x : g.play.hole;   // zone: the open crease in the region you picked (bang unless you bounced or bent it)
     p.x += clamp(want - p.x, -1, 1)*dt*3.6;
     return;
   }
@@ -2535,22 +2568,36 @@ const REACH = 1.0;                                        // how far a defender'
 // earns a fight for yards when you do go down. Standing around earns nothing.
 const VERY_FAST = 8.6, FAST = 5.5;
 function runnerVel(p, t){ const h = p.xHist, a = h[h.length - 1], b = h.find(e => t - e.t <= 0.15) || a; const dt = a && b ? a.t - b.t : 0; return {x: dt > 0.03 ? (a.x - b.x)/dt : 0, z: p.speed}; }
+const wrapAng = a => ((a + Math.PI) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI) - Math.PI;
 function resolveContact(d, t, tc = t){
   const g = game, p = g.p, m = MASS[d.type] || 1.1, spd = p.speed;
   const who = {type: d.type, cutback: !!d.cutback, front: game.front, assigned: d.assigned || null, blocked: d.wasBlocked ?? null, shed: d.shedAt ?? null, live: -g.t, z: p.z, speed: p.speed, inBlock: !!d.block};   // for the tests
   g.hits = g.hits || []; g.hits.push(who);
   d.state = "resolved";
-  const sinceShoulder = tc - p.lastShoulder, sinceStiff = tc - p.lastStiff, sinceJuke = tc - p.lastJuke;
+  const sinceShoulder = tc - p.lastShoulder, sinceStiff = tc - p.lastStiff, sinceJuke = tc - p.lastJuke, sinceHurdle = tc - (p.lastHurdle ?? -9);
   const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz) || 0.01, nx = dx/dist, nz = dz/dist;
   const vr = runnerVel(p, t), runIn = Math.max(0, vr.x*nx + vr.z*nz), defIn = Math.max(0, -(d.vx*nx + d.vz*nz));
+  // the clock, from above, with 12 where you're running: from 10 to 2 the truck (and the hurdle) works,
+  // from 2 to 5 and 7 to 10 the stiff arm; each fades over 10 degrees past its edge
+  const head = Math.hypot(vr.x, vr.z) > 1 ? Math.atan2(vr.x, vr.z) : 0, clockDeg = Math.abs(wrapAng(Math.atan2(dx, dz) - head))*180/Math.PI;
+  const frontW = clamp((70 - clockDeg)/20, 0, 1), sideW = clamp((clockDeg - 50)/20, 0, 1)*clamp((160 - clockDeg)/20, 0, 1);
+  who.clock = Math.round(clockDeg);
   // forgiving windows: a lowered shoulder lasts 2.5 yards; a stiff arm lasts 0.8 s, or as long as the arm is held out on his side
   const lowered = sinceShoulder < 0.5 || (sinceShoulder < 1.5 && p.z <= (p.lowerZ ?? -99));
-  const truck = lowered && p.speed > 3;
+  const truck = lowered && p.speed > 3 && frontW > 0.5;   // a shoulder only trucks a man in front of you
   const stiffOnHim = !p.stiffSide || Math.abs(dx) < 0.5 || Math.sign(dx) === p.stiffSide;   // a body stiff arm has to go toward him
   const held = mode === "body" && now() - lastHop > 0.6 && (Math.abs(dx) < 0.5 ? BodyCore.state.armOut.L || BodyCore.state.armOut.R : BodyCore.state.armOut[dx > 0 ? "R" : "L"]);
-  const stiff = (sinceStiff < 0.8 && stiffOnHim) || held;
+  const stiff = ((sinceStiff < 0.8 && stiffOnHim) || held) && sideW > 0.5;   // and a stiff arm a man at your side
+  const hurdle = sinceHurdle < 0.6 && frontW > 0.5;   // in the air over a man in front of you
   const tm = mode === "body" ? 1.4 + 0.5*clamp(((p.depth || 0) - 0.15)/0.3, 0, 1.2) : 1.8;   // body: a deeper squat trucks harder (hip drop 0.15 to 0.5 torso lengths)
-  const Pr = runIn*(truck ? tm : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
+  const Pr = runIn*(truck ? 1 + (tm - 1)*frontW : 1), Pd = m*(defIn + 3.0), ratio = Pr/Pd;
+  // the hurdle: over the top of a tackler in front of you; he goes under, and the landing costs a little speed
+  if (hurdle && Math.random() < 0.55 + 0.35*frontW){
+    d.state = "down"; d.vx = rand(-0.5, 0.5); d.vz = -1.5; p.speed *= 0.9;
+    g.stats.hurdles = (g.stats.hurdles || 0) + 1; g.stats.broken++; sfx.whoosh(); g.shake = 0.3; crowd(0.4, 1.5);
+    banner("Hurdled him!", "", 1); if (!announce("hurdle", {chance: 0.6})) say("Hurdled him!");
+    return;
+  }
   // the whiff: you're past his reach. A defender who came in hot can't redirect.
   const hot = Math.hypot(d.vx, d.vz) > d.speed*0.85, reach = hot ? REACH*0.8 : REACH;
   const dive = Math.abs(dx) > reach;                        // just out of reach: he leaves his feet for an arm tackle
@@ -2565,11 +2612,12 @@ function resolveContact(d, t, tc = t){
   if (dive) hold *= 0.45;
   else if (Math.abs(dx) > 0.6 || nz < 0.3) hold *= 0.7;    // an arm tackle from the side or behind
   hold *= clamp(1.2 - 0.3*ratio, 0.5, 1);                  // momentum (a truck already counts here)
-  if (stiff) hold *= d.type === "DL" ? 0.8 : 0.6;
+  if (stiff) hold *= 1 - (d.type === "DL" ? 0.35 : 0.55)*sideW;   // the right move in its zone: a stiff arm at your side,
+  if (truck) hold *= 1 - (d.type === "DL" ? 0.3 : 0.45)*frontW;    // a truck through a man in front of you
   // run straight at a square, broken-down tackler without a move and he usually wins: make him miss
-  const noMove = !truck && !stiff && sinceJuke > 1.2;
+  const noMove = !truck && !stiff && !hurdle && sinceJuke > 1.2;
   if (noMove && !dive && Math.abs(dx) < 0.9 && nz > 0.5) hold = Math.max(hold, hot ? 0.7 : 0.85);
-  hold = Math.max(hold*0.95, 0.22);                        // nobody is untackleable... (the 0.9: you're the star)
+  hold = Math.max(hold*0.8, 0.2);                          // nobody is untackleable... (the 0.8: you're the star; the clock zones took the any-angle stiff arm away)
   if (spd >= VERY_FAST) hold = 0.1;                        // ...unless you're flying: then he mostly bounces off
   if (d.block && Math.random() >= hold){ d.state = "blocked"; p.speed *= 0.85; banner("Slipped the grab!", "", 0.8); return; }
   if (Math.random() >= hold){
@@ -2665,6 +2713,19 @@ function updateLive(dt, t){
   p.speed += clamp(target - p.speed, -5*dt, 4*dt);   // getting back up to speed after a cut or a hit takes a moment
   p.bob += dt*(2 + sps*2.2);
   // moves
+  // zone runs: behind the line, a bound picks the lane: toward the play side bounces it outside, away from it
+  // bends it back; no bound and you bang it where it's called. Past the line a bound is a juke.
+  const zoneRun = (g.play.scheme === "zone" || g.play.scheme === "ozone") && !g.caught;
+  if (input.juke && zoneRun && p.z < 0 && g.blockers){
+    const s = g.play.hole >= 0 ? 1 : -1, L = playLanes(g.play), want = input.juke === s ? L.find(l => l.k === "bounce") : L.find(l => l.k === "bend" || l.k === "cut back");
+    if (want && (!g.path || g.path.k !== want.k)){ g.path = want; sfx.whoosh(); banner(want.k === "bounce" ? "Bounce it!" : "Bend it back!", "", 0.8); }
+    input.juke = 0;
+  }
+  if (input.hurdle){
+    if (t - (p.lastHurdle ?? -9) > 0.9 && p.speed > 2 && !g.dive){ p.lastHurdle = input.hurdleT ?? t; p.hurdleT = 0; sfx.whoosh(); }
+    input.hurdle = false;
+  }
+  if (p.hurdleT != null){ p.hurdleT += dt; const u = p.hurdleT/0.6; p.air = u < 1 ? 0.6*Math.sin(Math.PI*u) : 0; if (u >= 1){ p.hurdleT = null; p.speed *= 0.95; } }
   if (input.juke && t - p.lastJuke > 0.55){
     p.jukeFrom = p.x; p.jukeTo = p.x + input.juke*1.6; p.jukeT = 0; p.lastJuke = input.jukeT ?? t; p.speed *= 0.9; sfx.whoosh();   // a real cut: about a step and a half, and it costs a little speed
     if (mode === "body"){ p.jukeLat0 = BodyCore.state.lateral; p.jukeMax = 0; p.jukeDir = input.juke; p.jukeK = 0; }
@@ -3120,7 +3181,7 @@ function update(dt){
     g.t = C.snap ? 0 : 1;
     if (C.snap){ banner("Hut!", g.playType === "pass" ? "Sit in your stance!" : g.playType === "route" ? "Run your route!" : "Knees up!", 0.7); }
     if (g.t <= 0){ g.phase = "live"; g.t = 0; g.hutDone = false; input.steps = input.steps.filter(s => t - s.t < 0.4);
-      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.rec = []; g.recT = 0; g.bigPlay = false; g.replay = null; g.deadT = 0; g.hits = []; g.tackler = null; g.rail = null; g.squared = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; g.lane = null; g.laneAt = 0;
+      g.blockers = g.playType === "run" ? makeBlockers() : g.play.screen ? screenBlockers() : null; g.pile = null; g.rec = []; g.recT = 0; g.bigPlay = false; g.replay = null; g.deadT = 0; g.hits = []; g.tackler = null; g.rail = null; g.squared = null; g.glance = 0; g.dive = null; g.goalLine = g.playType === "run" && g.ballOn <= 3; input.dive = false; input.hurdle = false; g.lane = null; g.laneAt = 0; g.path = null; game.p.creaseX = null; game.p.creaseAt = -9;
       input.juke = 0; input.shoulder = input.stiff = input.punch = false; input.jukeT = input.shoulderT = input.stiffT = input.punchT = null; }
   } else if (g.phase === "live"){
     if (g.playType === "pass") updatePass(dt, t); else if (g.playType === "route") updateRoute(dt, t); else updateLive(dt, t);
@@ -3357,10 +3418,10 @@ function drawCues(c, t, world2D){
     cx.fillText("✋", sd > 0 ? W - w*0.45 : w*0.45, H*0.5); cx.globalAlpha = 1;
   }
   // the read: a green arrow on the open lane while you're still behind the line
-  if (g.phase === "live" && g.lane && g.p.z < 0.5){
-    const a = proj(c, g.lane.x, 0.05, 1.8), b = proj(c, g.lane.x, 0.05, 4.2);
+  if (g.phase === "live" && (g.path || g.lane) && g.p.z < 0.5){
+    const L = g.path || g.lane, a = proj(c, L.x, 0.05, 1.8), b = proj(c, L.x, 0.05, 4.2);
     if (a && b){ const pulse = 0.55 + 0.35*Math.sin(t*10), w = Math.max(10, a.s*0.9);
-      cx.fillStyle = `rgba(90,230,120,${pulse})`; cx.beginPath(); cx.moveTo(b.x, b.y); cx.lineTo(a.x - w, a.y); cx.lineTo(a.x - w*0.35, a.y); cx.lineTo(a.x - w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y); cx.lineTo(a.x + w, a.y); cx.closePath(); cx.fill(); }
+      cx.fillStyle = g.path ? `rgba(255,207,63,${pulse})` : `rgba(90,230,120,${pulse})`; cx.beginPath(); cx.moveTo(b.x, b.y); cx.lineTo(a.x - w, a.y); cx.lineTo(a.x - w*0.35, a.y); cx.lineTo(a.x - w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y + w*0.6); cx.lineTo(a.x + w*0.35, a.y); cx.lineTo(a.x + w, a.y); cx.closePath(); cx.fill(); }
   }
   // pass pro: a ring that closes on the blitzer right as he arrives, so you can time the punch
   if (g.playType === "pass" && g.phase === "live" && g.pp.rusher.state === "rush" && g.pp.eta < 0.9){

@@ -12,11 +12,12 @@ Play at **https://hungkach.github.io/homecoming-hero/**. Camera play needs that 
 | --- | --- | --- |
 | Take the handoff | Start sprinting at the snap; the QB meets you at the mesh (or pitches on a toss) | Tap fast |
 | Sprint | High knees in place. Faster knees run faster, and higher knees add a little more; tired, lower knees still count | Tap fast |
-| Find the hole | Automatic: behind the line you follow the most open lane (bang, bend, or bounce); past it you bend toward open grass. When a defender squares you up, a gold ring and a beep mark him and the path stops: your move | Automatic |
+| Find the hole | Automatic: past the line you bend toward open grass. Behind it, zone runs are your call: no bound and you bang it (the open crease between the center and the play-side tackle); bound toward the play side to bounce it outside, away from it to bend it back. The green arrow points at the most open lane; your pick turns it gold. Once you cross the line a bound is a juke. Other runs follow the most open lane on their own. When a defender squares you up, a gold ring and a beep mark him and the path stops: your move | Automatic; on zone runs swipe sideways behind the line to bounce or bend |
 | Juke | Bound out to one side and straight back. A bigger, faster bound cuts farther (up to about 2.5 yards) and fools even a tackler who is under control | Swipe sideways |
 | Goal line dive | Inside the 3: jump at the line to go over the top. Leave from the pile, not early; speed carries you farther | Swipe up (it replaces the stiff arm there) |
-| Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards | Swipe down |
-| Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out. On a breakaway, when one man closes from the side and nobody else is around, your view glances at him and that edge flashes red with a hand | Swipe up |
+| Truck | Duck your head and shoulder, or squat; it stays lowered for the next 2.5 yards. Works on a tackler in front of you (10 to 2 on a clock, 12 where you're running) | Swipe down |
+| Hurdle | Jump. You go over a tackler in front of you (10 to 2); the landing costs a little speed. Same jump as the catch | Two-finger tap |
+| Stiff arm | Raise one arm out to the side the tackler is on; it works as long as you hold it out. Works on a tackler at your side (2 to 5 on the right, 7 to 10 on the left); head on, it does little. On a breakaway, when one man closes from the side and nobody else is around, your view glances at him and that edge flashes red with a hand | Swipe up |
 | Pass pro: set and anchor | Squat before the blitzer gets there (any depth; deeper fills the bar faster), then hold it about 2.5 seconds (you step into his lane on your own) | Hold a thumb down |
 | Pass pro: punch (bonus) | Both arms out to the sides as he hits: he's stunned, the hold is shorter, the pocket is cleaner | Tap |
 | Route: run it | High knees | Tap fast |
