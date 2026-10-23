@@ -80,6 +80,11 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 /* warm-up: the move name is huge, the how-to is one plain line, and a figure in the corner shows it */
 .coachCard.warm h2{font-size:clamp(44px,max(12vh,7vw),120px);line-height:.95}
 .coachCard.warm #calibMsg{font-size:clamp(20px,4.2vh,40px)!important;line-height:1.15}
+/* the dummy check: a slim strip, so the field and the dummy stay in view */
+.coachCard.warm.drill{padding:8px 14px;gap:4px;background:rgba(10,14,28,.72)}
+.coachCard.warm.drill h2{font-size:clamp(30px,6vh,60px)}
+.coachCard.warm.drill #calibMsg{font-size:clamp(16px,2.6vh,24px)!important}
+.coachCard.warm.drill #warmBar,.coachCard.warm.drill .btns,.coachCard.warm.drill #calibDiag{display:none}
 .warmBar{height:clamp(6px,1.2vh,12px);border-radius:999px;background:rgba(255,255,255,.18);overflow:hidden}
 .warmBar i{display:block;height:100%;width:100%;background:var(--gold);transform-origin:left center}
 .warmStep{font:600 clamp(14px,2.4vh,22px)/1 var(--cond);letter-spacing:.06em;color:var(--ink-dim)}
@@ -150,7 +155,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
       <button id="touchBtn" type="button">Play with touch</button>
       <button id="bodyBtn" class="ghost" type="button">Play with body</button>
     </div>
-    <p class="diag" id="buildStamp">Build: Oct 22, real helmets, screen convoy</p>
+    <p class="diag" id="buildStamp">Build: Oct 23, warm-up check on a dummy</p>
   </div>
 </div>
 
@@ -220,7 +225,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 
 <script>
 /* =====================================================================
-   body core v0.7  (start)
+   body core v0.8  (start)
    Shared camera body tracking for the body arcade games.
    Copy this whole <script> block into another game. It uses no game
    globals; the game reads BodyCore.state, drains BodyCore events, and
@@ -228,7 +233,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
    ===================================================================== */
 const BodyCore = (() => {
   "use strict";
-  const VERSION = "0.7";
+  const VERSION = "0.8";
   const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
   const TARGET_FPS = 30;
@@ -664,10 +669,13 @@ const BodyCore = (() => {
     }
     return seen;
   }
-  function applyMoveTest(){
+  // types: tune only these moves (the warm-up tunes one move, then checks it). keepLower: never raise a
+  // threshold that is already lower (a retry that made the move easier stays easier).
+  function applyMoveTest(types, opts = {}){
     const seen = {};
     for (const tr of TRIGGERS) for (const c of tr.cues){
-      if (!c.calib) continue;
+      if (!c.calib || (types && !types.includes(tr.type))) continue;
+      const was = {on: c.on, off: c.off};
       const k = cueKey(tr, c), r0 = restN[k] ? Math.max(0, rest[k]/restN[k]) : 0;
       const toS = v => c.sq ? Math.sqrt(Math.max(0, v)) : v, fromS = v => c.sq ? v*v : v;   // square-root cues: fractions of the angle, not the height
       const R = toS(r0), lowBar = tr.type === "step" ? 0.4 : 0.7;      // an easy jog still counts as an honest rep
@@ -679,15 +687,27 @@ const BodyCore = (() => {
       const PK = toS(pk);
       const on = clamp(fromS(R + f*(PK - R)), c.def.on*(c.sq ? 0.2 : tr.type === "step" ? 0.35 : 0.45), c.def.on*1.5);
       c.on = on; c.off = Math.min(fromS(R + 0.25*(PK - R)), fromS(R + 0.5*(toS(on) - R)));
+      if (opts.keepLower){ c.on = Math.min(c.on, was.on); c.off = Math.min(c.off, was.off); }
     }
     if (peaks["level.drop"] && seen.level) squatRef = clamp(Math.max(...Object.values(peaks["level.drop"])), 0.15, 0.8);
-    const lifts = ["stepL.rise", "stepR.rise"].flatMap(k => Object.entries(peaks[k] || {}).filter(([r]) => !/jog/.test(r)).map(([, v]) => v));   // full high knees, not the jog
+    const lifts = ["stepL.rise", "stepR.rise"].flatMap(k => Object.entries(peaks[k] || {}).filter(([r]) => !/jog|check/.test(r)).map(([, v]) => v));   // full high knees, not the jog or the check
     if (lifts.length && seen.step) stepRef = clamp(lifts.reduce((a, b) => a + b, 0)/lifts.length, 0.15, 0.8);   // your typical warm-up lift
-    for (const k in peaks) delete peaks[k];
-    for (const k in rest){ delete rest[k]; delete restN[k]; }
+    if (!types){ for (const k in peaks) delete peaks[k]; for (const k in rest){ delete rest[k]; delete restN[k]; } }
     return seen;
   }
-  function resetThresholds(){ for (const tr of TRIGGERS) for (const c of tr.cues){ c.on = c.def.on; c.off = c.def.off; } squatRef = 0.35; stepRef = 0.32; }
+  // make a move easier after a missed check: each size cue moves k of the way from rest to where it was,
+  // never below 30 percent of its default
+  function loosen(types, k = 0.7){
+    for (const tr of TRIGGERS) for (const c of tr.cues){
+      if (!c.calib || !types.includes(tr.type)) continue;
+      const key = cueKey(tr, c), r0 = restN[key] ? Math.max(0, rest[key]/restN[key]) : 0;
+      c.on = Math.max(c.def.on*0.3, r0 + k*(c.on - r0)); c.off = Math.min(c.off, r0 + 0.5*(c.on - r0));
+    }
+  }
+  function resetThresholds(){
+    for (const tr of TRIGGERS) for (const c of tr.cues){ c.on = c.def.on; c.off = c.def.off; } squatRef = 0.35; stepRef = 0.32;
+    for (const k in peaks) delete peaks[k]; for (const k in rest){ delete rest[k]; delete restN[k]; }
+  }
 
     /* ---------- framing check ----------
      Looks at one frame and returns the single most useful instruction.
@@ -737,12 +757,12 @@ const BodyCore = (() => {
     get latency(){ return latency; },
     setLatency(v){ latency = clamp(v, 0, 0.6); },
         MODES, detectDevice, pickMode, openCamera, partnerMode,
-    framing, captureStart, captureStop, applyMoveTest, movesSeen, resetThresholds,
+    framing, captureStart, captureStop, applyMoveTest, movesSeen, resetThresholds, loosen,
     attach(videoEl){ video = videoEl; },
 
   };
 })();
-/* ===================== body core v0.7  (end) ===================== */
+/* ===================== body core v0.8  (end) ===================== */
 </script>
 <script>
 (() => {
@@ -1478,8 +1498,7 @@ window.addEventListener("keydown", e => {
 window.addEventListener("keyup", e => { if (e.code === "ArrowDown") input.keyStance = false; });
 
 /* ============ startup sequence: framing check, move test, latency check ============ */
-// The warm-up: two rounds of every move, so each trigger is tuned to a tired rep, not just the first one.
-// Anything still not caught after two rounds gets a short third round.
+// The warm-up: each move a few times (tuned to your weakest honest rep), then tried on the dummy (see WARM_STATIONS).
 const WARM_STAND = {id: "stand", big: "Stand tall", small: "Arms relaxed, feet under your hips.", say: "Stand tall.", secs: 2.0, cap: "stand", end(){ BodyCore.calibrateStand(1.2); }};
 const WARM_MOVES = [
   {id: "jog", big: "Easy jog", small: "Jog in place, knees low. Your tired pace.", say: "Easy jog in place. Knees low.", secs: 2.6, cap: ["step"], capRound: "jog"},
@@ -1493,23 +1512,23 @@ const WARM_MOVES = [
   {id: "raiseB", big: "Block!", small: "Both arms straight out to the sides, like a T.", say: "Block! Both arms out.", secs: 1.6, cap: ["raise"]},
   {id: "jump", big: "Jump!", small: "Jump and reach up, like you're catching a pass.", say: "Jump!", secs: 1.6, cap: ["jump"]}
 ];
-const MOVE_NAMES = {step: "high knees", hop: "juke bound", level: "truck squat", raise: "arm raise", jump: "jump"};
-const roundIntro = (n, text) => ({id: "round", big: n === 3 ? "One more round" : `Round ${n}`, small: text, say: n === 3 ? "One more round." : `Round ${n}.`, secs: 1.6, cap: null});
+// the warm-up: for each move, do it a few times (the camera learns your version of it), then try it on the dummy
 function warmPlan(){
-  return [WARM_STAND, roundIntro(1, "Every move once."), ...WARM_MOVES.map(m => ({...m, round: 1})),
-    roundIntro(2, "Same moves again."), ...WARM_MOVES.filter(m => !m.once).map(m => ({...m, round: 2}))];
+  return [WARM_STAND, ...WARM_STATIONS.flatMap(st => [...st.moves.map(id => ({...WARM_MOVES.find(m => m.id === id), round: 1, station: st.id})),
+    {id: "check", station: st.id, check: true, cap: null, secs: 0}])];
 }
 const BEAT = 0.9;
 // the warm-up card: huge move name, a timer bar, round and step, and the demo figure in the corner
 function warmUI(S, t){
-  const on = !!(S && S.active && S.phase === "movetest" && S.cur);
-  $("coachCard").classList.toggle("warm", on);
-  $("warmBar").hidden = $("warmStep").hidden = $("demo").hidden = !on;
+  const drill = !!(S && S.active && (S.phase === "drill" || S.phase === "reframe") && S.drill);
+  const on = drill || !!(S && S.active && S.phase === "movetest" && S.cur);
+  $("coachCard").classList.toggle("warm", on); $("coachCard").classList.toggle("drill", drill && S.phase === "drill");
+  $("warmBar").hidden = $("warmStep").hidden = !on; $("demo").hidden = !on || drill;
   if (!on) return;
-  const cur = S.cur, moves = S.plan.filter(m => m.round === cur.round && m.cap && m.id !== "stand");
+  const cur = S.cur, sid = drill ? S.drill.st.id : cur.station, i = WARM_STATIONS.findIndex(x => x.id === sid);
   $("warmFill").style.transform = `scaleX(${clamp(S.stepT/S.stepLen, 0, 1)})`;
-  $("warmStep").textContent = cur.round ? `Round ${cur.round} · move ${moves.indexOf(cur) + 1} of ${moves.length}` : cur.id === "stand" ? "Warm-up" : "";
-  drawDemo($("demo"), cur.id, t);
+  $("warmStep").textContent = i >= 0 ? `${WARM_STATIONS[i].name} · ${drill ? "try it" : "learn it"} · move ${i + 1} of ${WARM_STATIONS.length}` : cur.id === "stand" ? "Warm-up" : "";
+  if (!drill) drawDemo($("demo"), cur.id, t);
 }
 /* A stick figure that loops the move, facing you like a mirror: "left" moves to your left on the screen. */
 function drawDemo(cv, id, t){
@@ -1562,6 +1581,183 @@ function drawDemo(cv, id, t){
   }
   x.restore();
 }
+/* ---------- the check: right after each move is tuned, you try it on a tackling dummy ----------
+   In the 3D view, first person, with the game's own rules: the jog has to carry you to the dummy, a bound
+   jukes past it, a squat trucks it, an arm out stiff-arms it, both arms out punch the sled, a jump catches
+   the ball. Every rep the camera sees shows at once. A miss makes the move easier and runs it again; if
+   the camera lost the body part it needs, you get back in frame first. After three misses it moves on
+   with the easiest setting. */
+const DRILL_TRIES = 3;
+const VIS = {run: [25, 26], juke: [23, 24, 25, 26], truck: [23, 24, 25, 26], stiff: [13, 14, 15, 16], block: [13, 14, 15, 16], jump: [0, 23, 24]};
+const PART = {run: "knees", juke: "hips and knees", truck: "hips and knees", stiff: "arms", block: "arms", jump: "head and hips"};
+const WARM_STATIONS = [
+  {id: "run", name: "Running", types: ["step"], moves: ["jog", "knees"], limit: 10,
+    big: "Jog to the dummy", small: "Your easy pace. Every step moves you.", say: "Now jog to the dummy. Your easy pace."},
+  {id: "juke", name: "Juke", types: ["hop"], moves: ["hopL", "hopR"], limit: 16, reps: [-1, 1],
+    big: "Juke the dummy", small: "Bound to the side as you walk up to it.", say: "Juke the dummy."},
+  {id: "truck", name: "Truck", types: ["level"], moves: ["halfSquat", "deepSquat"], limit: 12,
+    big: "Truck the dummy", small: "Squat into it as you walk up. Deeper hits harder.", say: "Truck the dummy. Squat into it."},
+  {id: "stiff", name: "Stiff arm", types: ["raise"], moves: ["raiseL", "raiseR"], limit: 14, reps: [-1, 1],
+    big: "Stiff arm the dummy", small: "Push your arm out to its side.", say: "Stiff arm the dummy."},
+  {id: "block", name: "Block", types: ["raise"], moves: ["raiseB"], limit: 10,
+    big: "Punch the sled", small: "Both arms straight out at once.", say: "Punch the sled. Both arms out."},
+  {id: "jump", name: "Jump", types: ["jump"], moves: ["jump"], limit: 10,
+    big: "Jump for the ball", small: "Jump and reach as it comes to you.", say: "Jump for the ball."}
+];
+function drillGame(){
+  return {phase: "drill", ballOn: 60, toGo: 99, down: 1, q: 1, home: 0, away: 0, clock: QUARTER_SECONDS, playType: "run", play: {hole: 0, name: "Check"}, defenders: [], flash: 0, shake: 0, stats: {},
+    p: {x: 0, z: -6, speed: 0, bob: 0, dip: 0, stiffAnim: 0, jukeT: 9, jukeFrom: 0, jukeTo: 0, ballSide: 1, xHist: [], air: 0}, dummy: {x: 0, z: 0, tilt: 0, side: 0, fall: 0}};
+}
+function startDrill(stationId){
+  const S = setup, st = WARM_STATIONS.find(x => x.id === stationId);
+  BodyCore.applyMoveTest(st.types, {keepLower: true});   // tuned from the reps you just did
+  S.drill = {st, tries: 0, prevGame: game};
+  S.checks = S.checks || {};
+  drillReset();
+}
+function drillReset(){
+  const S = setup, D = S.drill, st = D.st;
+  game = drillGame();
+  Object.assign(D, {t: 0, done: false, after: null, got: {}, reps: (st.reps || [0]).slice(), steps: [], held: [], hands: {L: -9, R: -9}, lastHop: -9, vis: {n: 0, ok: 0}, count: 0, flash: 0, walkPause: 0});
+  drillPlace();
+  S.phase = "drill"; S.stepT = S.stepLen = st.limit;
+  const side = D.reps[0];
+  coach(drillTitle(), D.tries ? "Same move. It's easier now." : st.small);
+  say(D.tries ? `Again. ${drillTitle()}.` : st.say + (side ? (side < 0 ? " Left first." : "") : ""), true);
+  BodyCore.captureStart(st.types, "check" + D.tries);   // these reps count toward your tuning too
+}
+function drillTitle(){
+  const D = setup.drill, st = D.st, side = D.reps[0];
+  if (st.id === "juke") return side < 0 ? "Juke left" : "Juke right";
+  if (st.id === "stiff") return side < 0 ? "Stiff arm left" : "Stiff arm right";
+  return st.big;
+}
+// where you and the dummy start each rep
+function drillPlace(){
+  const D = setup.drill, g = game, p = g.p, d = g.dummy, id = D.st.id, side = D.reps[0] || 0;
+  Object.assign(p, {x: 0, z: -6, speed: 0, dip: 0, stiffAnim: 0, jukeT: 9, air: 0, ballSide: id === "stiff" ? -side || 1 : 1});
+  Object.assign(d, {x: id === "stiff" ? side*0.75 : 0, z: id === "run" ? 4 : id === "block" ? -4.6 : -2.4, tilt: 0, side: 0, fall: 0, vx: 0, vz: 0});
+  g.ball = null; D.walkPause = 0.6; D.repDone = false; D.nextAt = null; D.squared = false; p.jumpT = null;
+}
+function drillEvent(e){
+  const D = setup.drill; if (!D || D.done || D.after) return;
+  const id = D.st.id, g = game, p = g.p;
+  if (e.type === "step"){ D.steps.push({t: e.t, w: e.pitch == null ? 1 : clamp(0.75 + (e.pitch - 30)/100, 0.75, 1.15)}); if (id === "run"){ D.count++; sfx.step(); } }
+  else if (e.type === "hop"){
+    D.lastHop = e.t;
+    if (id === "juke" && !D.repDone && p.jukeT > 0.3){
+      // the bound, sized like the game's juke: 1.2 to 2.6 yards by how far your hips moved
+      p.jukeFrom = p.x; p.jukeT = 0; p.jukeDir = e.dir; p.jukeLat0 = BodyCore.state.lateral; p.jukeMax = 0; p.jukeTo = p.x + e.dir*1.2;
+      sfx.whoosh(); drillGot(e.dir);
+    }
+  }
+  else if (e.type === "raise"){
+    D.hands[e.side] = e.t;
+    if (id === "block" && Math.abs(D.hands.L - D.hands.R) < 0.35){ D.hands.L = D.hands.R = -9; drillHit(1); }
+    else if (id === "stiff") D.held.push(e);
+  }
+  else if ((e.type === "level" || e.type === "duck") && id === "truck") D.held.push(e);
+  else if (e.type === "jump" && id === "jump" && g.ball && !g.ball.caught){ p.jumpT = 0; drillHit(1); }
+}
+// a rep the camera saw: mark it and show it
+function drillGot(side){ const D = setup.drill; D.got[side || 0] = true; D.flash = 1; D.repDone = true; }
+function drillHit(k, side){
+  const D = setup.drill, g = game, d = g.dummy, p = g.p, id = D.st.id; drillGot(side ?? D.reps[0]);
+  if (id === "truck"){ d.fall = 1; d.vz = 2 + 4*k; p.dip = 1; sfx.hit(); g.shake = 0.4; }
+  else if (id === "stiff"){ d.fall = 1; d.vx = d.x >= 0 ? 4 : -4; d.side = d.x >= 0 ? 1 : -1; p.stiffAnim = 1; sfx.pads(); }
+  else if (id === "block"){ d.vz = 3; d.fall = 0.35; p.stiffAnim = 1; sfx.pads(); }
+  else if (id === "jump"){ g.ball.caught = true; g.ball.z1 = p.z + 0.7; g.ball.x1 = p.x; sfx.handoff(); }
+  else if (id === "run"){ d.fall = 1; d.vz = 2; sfx.hit(); g.shake = 0.3; }
+}
+function updateDrill(dt){
+  const S = setup, D = S.drill, st = D.st, id = st.id, g = game, p = g.p, d = g.dummy, t = now();
+  D.flash = Math.max(0, D.flash - dt*2); g.shake = Math.max(0, g.shake - dt);
+  if (D.after){ D.after.t -= dt; if (D.after.t <= 0){ const f = D.after.fn; D.after = null; f(); } return; }
+  D.t += dt; S.stepT = Math.max(0, st.limit - D.t);
+  // can the camera see what this move needs?
+  const P = BodyCore.pose; D.vis.n++; if (P && t - BodyCore.lastPoseAt < 0.6 && VIS[id].every(i => P.img[i].v >= 0.5)) D.vis.ok++;
+  // squats and arm raises wait a beat and never count right after a bound, like in the game
+  while (D.held.length && t - D.held[0].t >= 0.25){
+    const e = D.held.shift(); if (Math.abs(e.t - D.lastHop) <= 0.5 || D.repDone) continue;
+    if (id === "truck" && (e.type === "duck" || BodyCore.state.depth >= 0.8*truckMin())) drillHit(clamp((BodyCore.state.depth - 0.1)/0.4, 0, 1));
+    else if (id === "stiff" && e.type === "raise"){ const side = e.side === "R" ? 1 : -1; p.ballSide = -side; drillHit(1, side); }
+  }
+  // you: running from your steps, or walking up to the dummy for the move drills
+  const sps = D.steps.filter(s => t - s.t <= 1.2).reduce((a, s) => a + s.w, 0)/1.2;
+  if (id === "run"){ p.speed += clamp(clamp(sps*1.9, 0, 9.3) - p.speed, -5*dt, 6*dt); if (!D.repDone) p.z += p.speed*dt; p.bob += dt*(2 + sps*2.2); }
+  else if (id === "juke" || id === "truck" || id === "stiff"){
+    D.walkPause -= dt;
+    if (D.walkPause <= 0 && !(D.repDone && id !== "juke") && !(D.squared && !D.repDone)){ p.speed = 1.7; p.z += p.speed*dt; p.bob += dt*4; } else p.speed = 0;
+  } else p.bob += dt*2;
+  if (p.jukeT < 0.3 && p.jukeLat0 != null){ p.jukeT += dt; p.jukeMax = Math.max(p.jukeMax, Math.abs(BodyCore.state.lateral - p.jukeLat0)); p.jukeTo = p.jukeFrom + p.jukeDir*clamp(1 + 3*p.jukeMax, 1.2, 2.6); p.x = lerp(p.jukeFrom, p.jukeTo, ease(clamp(p.jukeT/0.22, 0, 1))); }
+  p.dip = Math.max(0, p.dip - dt*1.5); p.stiffAnim = Math.max(0, p.stiffAnim - dt*1.4);
+  if (p.jumpT != null){ p.jumpT += dt; const u = p.jumpT/0.6; p.air = u < 1 ? 0.45*Math.sin(Math.PI*u) : 0; if (u >= 1) p.jumpT = null; }
+  // the dummy: knocked back and down by a hit
+  if (d.fall > 0){ d.tilt = Math.min(1.45, d.tilt + dt*4*d.fall); d.z += d.vz*dt; d.x += (d.vx || 0)*dt; d.vz *= 0.92; d.vx = (d.vx || 0)*0.92; }
+  // the ball for the jump: lobbed to you again and again until you go up for it
+  if (id === "jump" && (!g.ball || (!g.ball.caught && t - g.ball.t0 > g.ball.dur + 0.6))) { g.ball = {t0: t, dur: 1.5, x0: 0, z0: 14, x1: 0, z1: p.z + 0.8, caught: false}; sfx.incoming(1.5); }
+  // squared up a yard and a half from the dummy: stop, beep like in the game, and wait for the move (no clock to beat)
+  if (!D.repDone && (id === "truck" || id === "stiff" || id === "juke") && p.z >= d.z - 1.5){ p.z = d.z - 1.5; p.speed = 0; if (!D.squared){ D.squared = true; sfx.breakCue(0); } }
+  if (id === "run" && !D.repDone && p.z >= d.z - 1.0) drillHit(1);
+  // a finished rep: the next side, or the check is passed
+  if (D.repDone && !D.nextAt){ D.nextAt = t + (id === "juke" ? 1.4 : 1.1); }
+  if (D.nextAt && t >= D.nextAt){
+    D.nextAt = null;
+    const left = D.reps.filter(r => !D.got[r]);
+    if (left.length){ D.reps = left; drillPlace(); coach(drillTitle(), st.small); say(drillTitle() + ".", true); }
+    else return drillPass();
+  }
+  if (D.t >= st.limit) drillMiss();
+}
+function drillPass(){
+  const S = setup, D = S.drill; D.done = true;
+  BodyCore.captureStop(); BodyCore.applyMoveTest(D.st.types, {keepLower: true});
+  S.checks[D.st.id] = {ok: true, tries: D.tries + 1};
+  coach("Got it", `${D.st.name} works.`); say("Got it.", true);
+  D.after = {t: 1.2, fn: drillEnd};
+}
+function drillMiss(){
+  const S = setup, D = S.drill, st = D.st, seenFrac = D.vis.ok/Math.max(1, D.vis.n);
+  BodyCore.captureStop(); D.tries++;
+  if (D.tries >= DRILL_TRIES){
+    BodyCore.loosen(st.types, 0.5); S.checks[st.id] = {ok: false, tries: D.tries};
+    coach("Moving on", `${st.name} uses the easiest setting for now.`); say("Moving on.", true);
+    D.after = {t: 1.8, fn: drillEnd}; return;
+  }
+  if (seenFrac < 0.7){
+    // the camera lost what this move needs: get back in frame first
+    BodyCore.loosen(st.types, 0.85);
+    coach("Step back", `I lost your ${PART[st.id]} during that one.`); say(`Step back. I lost your ${PART[st.id]}.`, true);
+    D.after = {t: 1.6, fn: () => { S.phase = "reframe"; S.okFor = 0; S.lastCode = ""; }}; return;
+  }
+  BodyCore.loosen(st.types, 0.7);
+  coach("Again", "I made it easier."); say("Again. I made it easier.", true);
+  D.after = {t: 1.6, fn: drillReset};
+}
+function drillEnd(){
+  const S = setup; game = S.drill.prevGame; S.drill = null; S.phase = "movetest"; S.stepT = 0;
+}
+// the check HUD: one dot per rep, a big step count for the jog, and a flash for each rep the camera sees
+function drawDrillHud(t){
+  const D = setup.drill; if (!D) return;
+  const u = Math.min(W, H), cy = H*0.8;
+  if (D.flash > 0){ cx.strokeStyle = `rgba(90,220,120,${D.flash})`; cx.lineWidth = u*0.04; cx.strokeRect(0, 0, W, H); }
+  cx.textAlign = "center"; cx.textBaseline = "middle";
+  if (D.st.id === "run"){
+    cx.font = `800 ${Math.round(u*0.16)}px system-ui, sans-serif`; cx.fillStyle = "rgba(255,255,255,.92)"; cx.fillText(String(D.count), W/2, cy - u*0.02);
+    cx.font = `600 ${Math.round(u*0.045)}px system-ui, sans-serif`; cx.fillText("steps", W/2, cy + u*0.09);
+  } else {
+    const all = D.st.reps || [0];
+    all.forEach((r, i) => { const x = W/2 + (i - (all.length - 1)/2)*u*0.22;
+      cx.beginPath(); cx.arc(x, cy, u*0.07, 0, 7); cx.fillStyle = D.got[r] ? "rgba(90,220,120,.95)" : "rgba(0,0,0,.45)"; cx.fill();
+      cx.lineWidth = u*0.012; cx.strokeStyle = D.got[r] ? "#fff" : "rgba(255,255,255,.6)"; cx.stroke();
+      if (r){ cx.fillStyle = "#fff"; cx.font = `800 ${Math.round(u*0.06)}px system-ui, sans-serif`; cx.fillText(r < 0 ? "L" : "R", x, cy + u*0.004); } });
+  }
+  // time left, and which try this is
+  const k = clamp(1 - D.t/D.st.limit, 0, 1);
+  cx.fillStyle = "rgba(255,255,255,.15)"; cx.fillRect(16, H - 30, W - 32, 12); cx.fillStyle = COL.gold; cx.fillRect(16, H - 30, (W - 32)*k, 12);
+  for (let i = 0; i < DRILL_TRIES; i++){ cx.beginPath(); cx.arc(W - 30 - i*20, H - 50, 6, 0, 7); cx.fillStyle = i < D.tries ? "rgba(255,120,90,.9)" : "rgba(255,255,255,.35)"; cx.fill(); }
+}
 const setup = {active: false, phase: null, full: true, okFor: 0, lastCode: "", lastSay: 0, step: 0, stepT: 0, stepLen: 1, beats: [], heard: [], hits: [], frame: null, note: ""};
 function coach(big, small){ $("calibTitle").textContent = big; $("calibMsg").textContent = small || ""; }
 function sayCoach(code, text){ const t = now(); if (code !== setup.lastCode || t - setup.lastSay > 4){ setup.lastCode = code; setup.lastSay = t; say(text, true); } }
@@ -1601,7 +1797,7 @@ function updateSetup(dt){
       if (S.okFor >= 1){ BodyCore.calibrateStand(0.8); S.phase = "reach"; S.okFor = camMode.frame === "full" ? 0 : 99; S.lastCode = ""; }
     } else if (S.okFor >= 0.5){
       coach("Locked in", ""); sayCoach("ok", "Locked in.");
-      if (S.full){ S.phase = "movetest"; S.step = -1; S.stepT = 1.2; S.stepLen = 1.2; S.plan = warmPlan(); S.extra = false; S.cur = null; }
+      if (S.full){ S.phase = "movetest"; S.step = -1; S.stepT = 1.2; S.stepLen = 1.2; S.plan = warmPlan(); S.cur = null; }
       else { S.phase = "stand"; S.stepT = S.stepLen = 2; coach("Stand tall", "Resetting your center."); }
     }
     return;
@@ -1619,20 +1815,23 @@ function updateSetup(dt){
     if (S.stepT > 0) return;
     const cur = S.plan[S.step];
     if (cur){ BodyCore.captureStop(); if (cur.end) cur.end(); }
-    if (S.step + 1 >= S.plan.length && !S.extra){
-      // after two rounds, a third round for anything the camera still hasn't caught
-      S.extra = true;
-      const seen = BodyCore.movesSeen(), again = WARM_MOVES.filter(m => !m.once && !seen[m.cap[0]]);
-      if (again.length) S.plan.push(roundIntro(3, `Just the ${[...new Set(again.map(m => MOVE_NAMES[m.cap[0]]))].join(", ")}.`), ...again.map(m => ({...m, round: 3})));
-    }
     const next = S.cur = S.plan[++S.step];
+    if (next && next.check){ startDrill(next.station); return; }
     if (next){ S.stepT = S.stepLen = next.secs; S.capNext = next.cap ? next : null; coach(next.big, next.small); say(next.say, true); return; }
-    const seen = BodyCore.applyMoveTest();
-    const missed = Object.keys(MOVE_NAMES).filter(k => !seen[k]).map(k => MOVE_NAMES[k]);
-    S.note = missed.length ? `Didn't catch your ${missed.join(", ")}, so those use standard settings.` : `All ${Object.keys(MOVE_NAMES).length} moves tuned to you.`;
+    const C = S.checks || {}, missed = WARM_STATIONS.filter(x => C[x.id] && !C[x.id].ok).map(x => x.name.toLowerCase());
+    S.note = missed.length ? `${missed.join(", ")} didn't register in the check, so ${missed.length > 1 ? "they use" : "it uses"} the easiest setting.`.replace(/^./, c => c.toUpperCase()) : `All ${WARM_STATIONS.length} moves checked.`;
     S.phase = "latIntro"; S.stepT = S.stepLen = 3.4;
     coach("Arm out on the beat", "Four clicks to count in, then one arm out to the side on each of the next four beats.");
     say("Arm out on the beat. Four counts, then one arm out on every beat.", true);
+    return;
+  }
+  if (S.phase === "drill"){ updateDrill(dt); return; }
+  if (S.phase === "reframe"){
+    // back in frame before trying the move again
+    const f = BodyCore.framing(camMode.frame, {now: t}); S.frame = f;
+    if (!f.ok){ S.okFor = 0; coach(f.say, frameHint()); sayCoach(f.code, f.say); return; }
+    S.okFor += dt; coach("Hold it there", "");
+    if (S.okFor >= 1) drillReset();
     return;
   }
   if (S.phase === "latIntro"){
@@ -1690,7 +1889,7 @@ function pumpBody(){
   const tn = now();
   while (heldMoves.length && tn - heldMoves[0].t >= 0.25){ const e = heldMoves.shift(); if (game && Math.abs(e.t - lastHop) > 0.5) bodyMove(e); }
   for (const e of BodyCore.drain()){
-    if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); continue; }
+    if (setup.active){ if (setup.phase === "latency" && e.type === "raise") setup.hits.push(e.t); else if (setup.phase === "drill") drillEvent(e); continue; }
     if (!game || game.phase === "over" || paused) continue;
     if (e.type === "step") addStep(e.t, e.h, e.pitch);
     else if (e.type === "hop"){ input.juke = e.dir; input.jukeT = e.tEff; lastHop = e.t; }   // a juke: bound out and back (a lean no longer counts)
@@ -2856,15 +3055,20 @@ function endGame(){
 
 /* ============ main update ============ */
 let paused = false;
+let kneesOutFor = 0;
 function update(dt){
-  const g = game; if (!g || paused) return;
+  const g = game; if (!g || paused || setup.active) return;
   const t = now();
   if (g.phase !== "over"){ g.realT += dt; syncClock(); }
   if (bannerT > 0){ bannerT -= dt; if (bannerT <= 0) $("banner").hidden = true; }
   g.flash = Math.max(0, g.flash - dt); g.shake = Math.max(0, g.shake - dt);
   g.load = (g.load || 0)*Math.exp(-dt/90) + (g.phase === "live" ? dt : 0);   // recent hard work, in live seconds (fades over a minute and a half)
   if (mode === "body" && g.phase !== "over"){
-    if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame."); else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
+    // knees out of the picture means no steps: say so instead of letting the run die quietly
+    const P = BodyCore.pose; kneesOutFor = P && (P.img[25].v < 0.5 || P.img[26].v < 0.5) ? kneesOutFor + dt : 0;
+    if (t - BodyCore.lastPoseAt > 1.2) hint("I lost you. Step back so your head and knees are in frame.");
+    else if (kneesOutFor > 1.5){ hint("Step back. I can't see your knees."); if (!g.kneeSaid || t - g.kneeSaid > 8){ g.kneeSaid = t; say("Step back. I can't see your knees.", true); } }
+    else if (g.phase !== "huddle" || !g.firstPlay) hint(null);
   }
   if (g.phase === "huddle" || g.phase === "cadence") passPreSnap(dt);
   crowdFollow(); announcerTick(); if (AC) bandDuck(); updateOffense(dt);
@@ -3366,6 +3570,12 @@ function drawSetup(t){
   }
 }
 function render(t){
+  if (setup.active && setup.phase === "drill" && game && game.phase === "drill"){
+    // the check: first person in the stadium, the camera picture in the corner
+    if (R3.ready()){ const c = camState(true); cx.clearRect(0, 0, W, H); R3.draw(c, t); drawSelf(c, t); }
+    else { R3.hide(); drawSetup(t); }
+    drawDrillHud(t); drawPip(); return;
+  }
   if (setup.active){ R3.hide(); drawSetup(t); return; }
   const in3D = R3.ready();
   const c = camState(in3D);
@@ -3403,7 +3613,7 @@ function render(t){
 // In three.js, z is flipped so the camera looks down -Z.
 const R3 = (() => {
   let T = null, renderer = null, scene = null, cam = null, el = null, built = false, failed = false, on = false;
-  let venue, field, fieldTex, losLine, fdLine, arrow, ballMesh, cone, crowdMats = [], figs = [], numMats = new Map();
+  let venue, field, fieldTex, losLine, fdLine, arrow, ballMesh, cone, dummy, crowdMats = [], figs = [], numMats = new Map();
   let board, boardCtx, boardTex, boardKey = "", fw = null, lastFlash = 0, pr = 1.5, lowFor = 0;
   const M = {}, G = {};
   const force2D = typeof location !== "undefined" && /[?&]2d\b/.test(location.search || "");
@@ -3437,7 +3647,7 @@ const R3 = (() => {
     const back = new T.DirectionalLight(0xbfd0ff, 0.8); back.position.set(30, 40, -60); scene.add(back);
     venue = new T.Group(); scene.add(venue);
     buildField(); buildStands(); buildLights(); buildBoard(); buildPosts();
-    buildMaterials(); buildArrow(); buildBall(); buildCone(); buildFireworks();
+    buildMaterials(); buildArrow(); buildBall(); buildCone(); buildDummy(); buildFireworks();
     for (let i = 0; i < 28; i++) figs.push(makeFig());
     // rigged model players only with ?kaykit in the link (the KayKit pack is cartoon fantasy, so the football players stay the default)
     // the football mannequins by default; ?classic keeps the procedural players
@@ -3739,6 +3949,17 @@ const R3 = (() => {
     arrow = new T.Mesh(new T.ShapeGeometry(s), new T.MeshBasicMaterial({color: 0xffcf3f, transparent: true, opacity: 0.8, depthWrite: false}));
     arrow.rotation.x = -Math.PI/2; arrow.position.y = 0.04; arrow.renderOrder = 2; scene.add(arrow);
   }
+  // the warm-up's tackling dummy: a padded red bag with white bands on a black base; it tips from the base
+  function buildDummy(){
+    const lamb = c => new T.MeshLambertMaterial({color: c}), red = lamb(0xb3262e), white = lamb(0xf2efe6);
+    dummy = new T.Group();
+    const bag = new T.Mesh(new T.CylinderGeometry(0.3, 0.33, 1.6, 18), red); bag.position.y = 0.95;
+    const top = new T.Mesh(new T.SphereGeometry(0.3, 18, 8, 0, Math.PI*2, 0, Math.PI/2), red); top.position.y = 1.75;
+    const b1 = new T.Mesh(new T.CylinderGeometry(0.335, 0.335, 0.16, 18), white); b1.position.y = 1.35;
+    const b2 = b1.clone(); b2.position.y = 0.62;
+    const base = new T.Mesh(new T.CylinderGeometry(0.45, 0.5, 0.15, 18), lamb(0x161616)); base.position.y = 0.075;
+    dummy.add(bag, top, b1, b2, base); dummy.visible = false; scene.add(dummy);
+  }
   function buildCone(){
     cone = new T.Group();
     const c = new T.Mesh(new T.ConeGeometry(0.22, 0.7, 14), lam(0xff7a1a)); c.position.y = 0.35;
@@ -3790,7 +4011,7 @@ const R3 = (() => {
     cam.fov = 2*Math.atan((H/2)/c.F)*180/Math.PI; cam.aspect = W/H;
     cam.setViewOffset(W, H, 0, H/2 - c.hor, W, H); cam.updateProjectionMatrix();
     // lines and arrow
-    const showLines = g && g.phase !== "opp";
+    const showLines = g && g.phase !== "opp" && g.phase !== "drill";
     losLine.visible = !!showLines; losLine.position.set(0, 0.02, 0);
     fdLine.visible = !!(showLines && g.toGo < g.ballOn); if (g) fdLine.position.set(0, 0.025, -g.toGo);
     arrow.visible = !!(g && g.playType === "run" && (g.phase === "huddle" || g.phase === "cadence"));
@@ -4226,6 +4447,15 @@ const R3 = (() => {
     const g = game; let n = 0;
     if (KIT.ready) KIT.used = {};
     UAL.used = {};
+    dummy.visible = !!(g && g.phase === "drill");
+    if (dummy.visible){
+      // the warm-up check: just you and the dummy (it tips away from you when hit, or sideways from a stiff arm)
+      const d = g.dummy; dummy.position.set(d.x, 0, -d.z); dummy.rotation.set(d.side ? 0 : -d.tilt, 0, d.side ? -d.side*d.tilt : 0);
+      for (const f of figs) f.root.visible = false;
+      for (const b in UAL.pools) for (const inst of UAL.pools[b]) inst.root.visible = false;
+      if (KIT.ready) for (const nm of KIT_FILES) for (const inst of KIT.pools[nm]) inst.root.visible = false;
+      return;
+    }
     const put = (team, num, o, key, home = 0) => {
       const oo = key != null && !o.down ? motion(key, o, home, dt) : o;
       if (UAL.ready){ ualPut(team, num, oo, key, dt); return; }   // the football mannequins, once they've loaded
@@ -4420,6 +4650,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) pause
 
 // hooks for automated testing only
 window.__hh = { get game(){ return game; }, input, startTouch, endGame, sfx, band, r3: R3.info, set paused(v){ paused = v; }, setup, warmPlan, warmUI, drawDemo, coach,
+  startDrill, get drillState(){ return setup.drill; },
   testBody(key){ camMode = Object.assign({key}, BodyCore.MODES[key]); mode = "body"; $("startScreen").hidden = true; BodyCore.resetThresholds(); BodyCore.setLatency(0); beginSetup(true); } };
 
 resize();

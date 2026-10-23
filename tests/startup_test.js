@@ -57,6 +57,7 @@ function overhead(P){ P.lEl = [0.25, -0.82, 0]; P.rEl = [-0.25, -0.82, 0]; P.lWr
 
 // director: what the simulated player does, based on what the game shows
 const seenSteps = new Set();
+let drillSeen = {};
 let moveN = 0, armAt = -9, armSide = "r", duckAt = -9, leanAt = -9, leanDir = 1;
 let passSeen = false, camH = 0, offX = -0.7, phaseLog = [], lastPhase = "", stepStart = 0, lastStep = -1, hopFrom = 0, hopAt = -9, hopDir = 0, lastJukeAt = -9, playsSeen = 0;
 function director(t){
@@ -87,6 +88,27 @@ function director(t){
       if (id === "hopR") off.x = offX - 0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));
       if (id !== "hopL" && id !== "hopR") off.x = offX;
       seenSteps.add(id + (S.cur.round || 0));
+    }
+    if (S.phase === "drill" && S.drill && HH.game && HH.game.phase === "drill"){
+      // the check on the dummy: do the move when it's time, the way it was asked (DRILLFAIL=run hides the knees on the first try)
+      const D = S.drill, g = HH.game, id = D.st.id, side = D.reps[0], near = g.dummy.z - g.p.z;
+      if (D !== drillSeen.D || D.tries !== drillSeen.tries || D.reps.length !== drillSeen.left){ drillSeen = {D, tries: D.tries, left: D.reps.length, at: null, t0: t}; }
+      const failing = (process.env.DRILLFAIL || "").split(",").includes(id) && D.tries === 0;
+      if (id === "run"){ knees(P, t - drillSeen.t0, 50); if (failing) camH = -0.9; else if (camH === -0.9) camH = 0; }
+      else if (failing){}
+      else if ((id === "juke" || id === "truck" || id === "stiff") && near < 2.0 && drillSeen.at == null && !D.repDone) drillSeen.at = t + 0.2;
+      else if ((id === "block") && drillSeen.at == null && t - drillSeen.t0 > 1.2) drillSeen.at = t;
+      else if (id === "jump" && g.ball && !g.ball.caught && t - g.ball.t0 > g.ball.dur - 0.5 && drillSeen.at == null) drillSeen.at = t;
+      const u = drillSeen.at == null ? -1 : t - drillSeen.at;
+      if (u >= 0 && u < 1.4){
+        if (id === "juke") off.x = offX + side*-0.4*(u < 0.3 ? ease(u/0.3) : 1 - ease((u - 0.45)/0.35));   // person's +x is their left
+        else if (id === "truck"){ const a = 70*armPulse(u*0.9), r = a*Math.PI/180; thigh(P, "l", a); thigh(P, "r", a); off.y = 0.45*(1 - Math.cos(r)); }
+        else if (id === "stiff") raiseArm(P, side < 0 ? "l" : "r", armPulse(u));
+        else if (id === "block"){ raiseArm(P, "l", armPulse(u)); raiseArm(P, "r", armPulse(u)); }
+        else if (id === "jump") off.y = jumpUp(u);
+      } else if (u >= 1.4) drillSeen.at = null;
+      if (id !== "juke") off.x = offX;
+      seenSteps.add("check:" + id + D.tries);
     }
     if (S.phase === "latency"){
       for (let i = 4; i < 8; i++){ const u = t - (S.beats[i] + EXTRA + 0.02); if (u > -0.05 && u < 0.6) raiseArm(P, "r", armPulse(u*1.6)); } }
@@ -139,7 +161,9 @@ function director(t){
   return frame(P, off);
 }
 const tally = {};
-{ const d0 = BodyCore.drain; BodyCore.drain = () => { const e = d0(); if (HH.game && !HH.setup.active) for (const x of e) tally[x.type + (x.side || "")] = (tally[x.type + (x.side || "")] || 0) + 1; return e; }; }
+const drillTally = {};
+{ const d0 = BodyCore.drain; BodyCore.drain = () => { const e = d0(); if (HH.game && !HH.setup.active) for (const x of e) tally[x.type + (x.side || "")] = (tally[x.type + (x.side || "")] || 0) + 1;
+  if (HH.setup.active && HH.setup.phase === "drill" && HH.setup.drill) for (const x of e){ const k = HH.setup.drill.st.id + HH.setup.drill.tries + ":" + x.type; drillTally[k] = (drillTally[k] || 0) + 1; } return e; }; }
 (async () => {
   HH.testBody(KEY);
   let errors = 0, framingSays = new Set();
@@ -158,6 +182,8 @@ const tally = {};
   console.log("final coach line:", els.calibMsg.textContent);
   console.log("game events:", JSON.stringify(tally));
   console.log("warm-up steps:", [...seenSteps].join(" "));
+  console.log("checks:", JSON.stringify(HH.setup.checks || {}));
+  if (process.env.SHOWDRILL) console.log("drill events:", JSON.stringify(drillTally));
   console.log("latency set to", Math.round(BodyCore.latency*1000), "ms");
   if (g) console.log("game:", JSON.stringify({carries: g.stats.carries, yards: g.stats.yards, steps: g.stats.steps, jukes: g.stats.jukes, trucks: g.stats.trucks, stiffs: g.stats.stiffs, moves: moveN, broken: g.stats.broken, passPro: g.stats.passPro, pickups: g.stats.pickups, clean: g.stats.clean, sacks: g.stats.sacks, targets: g.stats.targets, catches: g.stats.catches, recYards: g.stats.recYards}));
 })();
