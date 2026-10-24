@@ -63,6 +63,8 @@ Pick 15, 20, 25, or 30 minutes on the start screen. The scoreboard still shows f
 
 Pick "Play with body." Phones get one question: watch on this phone, or on your TV. Everything else is picked automatically, and a manual override lets you test any setup.
 
+On an iPad (or any device whose front camera looks cropped), the framing step has a "Wider view?" button. Each tap tries the next camera size (some front cameras only show their full width at larger sizes); keep the one where you look smallest. The game remembers it. The small line at the bottom of the card shows the camera, the size, and the zoom range the browser allows.
+
 | Setup | Camera | Distance | Fits |
 | --- | --- | --- | --- |
 | Living room | Phone back camera, screen mirrored to TV | 3 to 4 ft | Head to feet |
